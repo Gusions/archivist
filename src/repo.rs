@@ -157,7 +157,10 @@ impl Repo {
 
     /// Create an encrypted repository in a local folder (must be new or empty).
     pub fn init_encrypted(root: &Path, pass: &str) -> Result<Repo> {
-        if !Self::is_repo(root) && root.is_dir() && std::fs::read_dir(root)?.next().is_some() {
+        if Self::is_repo(root) {
+            bail!(tr!("rs.repo_exists"));
+        }
+        if root.is_dir() && std::fs::read_dir(root)?.next().is_some() {
             bail!(tr!("rs.repo_not_empty", path = root.display()));
         }
         Self::init_encrypted_with(Arc::new(LocalBackend::new(root)), pass, KdfParams::default())
@@ -196,7 +199,7 @@ impl Repo {
             FORMAT_ENC => {
                 let Some(pass) = pass else { bail!(tr!("rs.password_required")) };
                 let raw = be.get(KEYS_KEY).with_context(|| tr!("rs.keyfile_bad"))?;
-                Some(Keys::from_keyfile(&raw, pass)?)
+                Some(crypto::unlock_cached(&raw, pass)?)
             }
             v => bail!(tr!("rs.unsupported_format", v = v)),
         };
