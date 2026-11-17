@@ -8,7 +8,7 @@
 *Incrementale, deduplicato, lossless. Un solo piccolo eseguibile Rust.*  
 **English** · [Italiano](README.it.md)
 
-[English](README.md) · **Italiano**
+[English](README.md) · **Italiano** · [Sito](https://archivist.gusions.com) · [Download](https://github.com/Gusions/archivist/releases/latest)
 
 Snapshot, non copie · lossless per costruzione · verifica integrità inclusa · niente cloud, niente account · traducibile
 

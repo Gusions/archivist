@@ -7,7 +7,7 @@
 *Back up your Obsidian vault. Restore it byte for byte.*  
 *Incremental, deduplicated, lossless.*  
 
-**English** · [Italiano](README.it.md)
+**English** · [Italiano](README.it.md) · [Website](https://archivist.gusions.com) · [Download](https://github.com/Gusions/archivist/releases/latest)
 
 [![Version](https://img.shields.io/badge/version-0.1.0-0A66E8)](Cargo.toml)
 [![Languages](https://img.shields.io/badge/languages-2-0A66E8)](#adding-a-language)
