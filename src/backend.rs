@@ -196,6 +196,9 @@ mod mem {
         pub fn keys(&self) -> Vec<String> {
             self.files.lock().unwrap().keys().cloned().collect()
         }
+        pub fn get_raw(&self, key: &str) -> Vec<u8> {
+            self.files.lock().unwrap().get(key).map(|e| e.0.clone()).unwrap_or_default()
+        }
         pub fn raw_put(&self, key: &str, data: &[u8]) {
             self.files.lock().unwrap().insert(key.to_string(), (data.to_vec(), Instant::now()));
         }

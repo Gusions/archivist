@@ -2,6 +2,7 @@
 mod i18n;
 mod backend;
 mod backup;
+mod crypto;
 mod ops;
 mod repo;
 mod server;
@@ -29,6 +30,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Create an encrypted archive (asks for a password). Plain archives are created by `backup`.
+    Init {
+        #[arg(long)]
+        encrypt: bool,
+    },
+    /// Change the password of an encrypted archive (data is not rewritten)
+    Passwd,
     /// Back up the vault
     Backup {
         #[arg(long)]
@@ -76,6 +84,21 @@ fn human(b: u64) -> String {
     format!("{:.1} {}", v, u[i])
 }
 
+/// Ask twice for a new password (or take it from the environment for scripting).
+fn new_password(env_override: Option<&str>) -> Result<String> {
+    if let Some(p) = env_override.and_then(|k| std::env::var(k).ok()).filter(|p| !p.is_empty()) {
+        return Ok(p);
+    }
+    let a = rpassword::prompt_password(tr!("cli.password_new"))?;
+    if a.is_empty() {
+        bail!(tr!("cli.password_empty"));
+    }
+    if a != rpassword::prompt_password(tr!("cli.password_repeat"))? {
+        bail!(tr!("cli.password_mismatch"));
+    }
+    Ok(a)
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("{}", tr!("cli.error", m = format!("{e:#}")));
@@ -87,12 +110,20 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     let st = Settings::load();
     i18n::set_lang(&st.lang);
-    let repo_path = |cli: &Cli| -> Result<PathBuf> {
+    let raw_path = |cli: &Cli| -> Result<PathBuf> {
         match (&cli.repo, st.repo.as_str()) {
             (Some(p), _) => Ok(p.clone()),
             (None, s) if !s.is_empty() => Ok(PathBuf::from(s)),
             _ => bail!(tr!("cli.not_configured")),
         }
+    };
+    // for encrypted archives, get the password (env, file or prompt) before opening
+    let repo_path = |cli: &Cli| -> Result<PathBuf> {
+        let p = raw_path(cli)?;
+        if Repo::is_encrypted_at(&p) && crypto::password().is_none() {
+            crypto::set_password(Some(rpassword::prompt_password(tr!("cli.password_prompt"))?));
+        }
+        Ok(p)
     };
     let prog = Progress::default();
     #[cfg(feature = "window")]
@@ -101,6 +132,21 @@ fn run() -> Result<()> {
     let default_cmd = Cmd::Ui { port: 7878, no_open: false, exit_when_closed: false };
     let cmd = cli.cmd.as_ref().unwrap_or(&default_cmd);
     match cmd {
+        Cmd::Init { encrypt } => {
+            if !*encrypt {
+                bail!("use `archivist backup` to create a plain archive, or `archivist init --encrypt`");
+            }
+            let p = raw_path(&cli)?;
+            let pass = new_password(Some("ARCHIVIST_PASSWORD"))?;
+            Repo::init_encrypted(&p, &pass)?;
+            println!("{}", tr!("cli.initialized", p = p.display()));
+        }
+        Cmd::Passwd => {
+            let repo = Repo::open(&repo_path(&cli)?)?;
+            let pass = new_password(Some("ARCHIVIST_NEW_PASSWORD"))?;
+            repo.change_password(&pass)?;
+            println!("{}", tr!("cli.password_changed"));
+        }
         Cmd::Backup { vault } => {
             let vault = vault.clone().or_else(|| (!st.vault.is_empty()).then(|| PathBuf::from(&st.vault)));
             let Some(vault) = vault else { bail!(tr!("cli.no_vault")) };

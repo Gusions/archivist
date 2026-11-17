@@ -6,11 +6,13 @@
 //!   packs/<name>.idx           JSON index of the pack (written ONLY once the pack is complete)
 //!   snapshots/<id>.meta.json   light metadata
 //!   snapshots/<id>.snap.zst    file -> chunk list (compressed JSON)
+//!   keys                       (v2 only) master keys wrapped with the passphrase
 //!   lock                       exclusive lock with heartbeat
 //!
 //! A pack without `.idx` is debris of an interrupted backup and is ignored.
 
 use crate::backend::{Backend, LocalBackend};
+use crate::crypto::{self, KdfParams, Keys};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -21,6 +23,9 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 const FORMAT: &str = "archivist-repo-v1";
+/// Encrypted repositories (see crypto.rs). Older versions refuse to open them.
+const FORMAT_ENC: &str = "archivist-repo-v2";
+const KEYS_KEY: &str = "keys";
 const PACK_TARGET: u64 = 64 * 1024 * 1024;
 const LOCK_KEY: &str = "lock";
 
@@ -73,6 +78,7 @@ struct OpenPack {
 
 pub struct Repo {
     be: Arc<dyn Backend>,
+    keys: Option<Keys>,
     packs: RwLock<Vec<String>>,
     index: RwLock<HashMap<String, Loc>>,
     writer: Mutex<Option<OpenPack>>,
@@ -135,33 +141,98 @@ impl Repo {
         }
     }
 
+    /// Open a local repository. Encrypted ones use the process passphrase (`crypto::password`).
     pub fn open(root: &Path) -> Result<Repo> {
-        Self::open_with(Arc::new(LocalBackend::new(root)), &root.display().to_string())
+        Self::open_with(Arc::new(LocalBackend::new(root)), &root.display().to_string(), crypto::password().as_deref())
     }
 
-    /// Create a repository on any backend (no-op if one already exists there).
+    /// Create a plain (unencrypted) repository on any backend; no-op if one already exists.
     pub fn init_with(be: Arc<dyn Backend>) -> Result<Repo> {
         if !be.exists("format")? {
             // the format marker goes last: its presence means the repository is usable
             be.put("format", FORMAT.as_bytes())?;
         }
-        Self::open_with(be, "")
+        Self::open_with(be, "", None)
     }
 
-    pub fn open_with(be: Arc<dyn Backend>, label: &str) -> Result<Repo> {
+    /// Create an encrypted repository in a local folder (must be new or empty).
+    pub fn init_encrypted(root: &Path, pass: &str) -> Result<Repo> {
+        if !Self::is_repo(root) && root.is_dir() && std::fs::read_dir(root)?.next().is_some() {
+            bail!(tr!("rs.repo_not_empty", path = root.display()));
+        }
+        Self::init_encrypted_with(Arc::new(LocalBackend::new(root)), pass, KdfParams::default())
+    }
+
+    pub fn init_encrypted_with(be: Arc<dyn Backend>, pass: &str, kdf: KdfParams) -> Result<Repo> {
+        if be.exists("format")? {
+            bail!(tr!("rs.repo_not_empty", path = "(repository)"));
+        }
+        be.put(KEYS_KEY, &Keys::generate().to_keyfile(pass, kdf)?)?;
+        be.put("format", FORMAT_ENC.as_bytes())?;
+        Self::open_with(be, "", Some(pass))
+    }
+
+    /// Does the local folder hold an encrypted repository?
+    pub fn is_encrypted_at(root: &Path) -> bool {
+        std::fs::read_to_string(root.join("format")).is_ok_and(|f| f.trim() == FORMAT_ENC)
+    }
+
+    #[allow(dead_code)] // used by the UI unlock flow and tests
+    pub fn is_encrypted(&self) -> bool {
+        self.keys.is_some()
+    }
+
+    /// Re-wrap the master keys under a new password. Data is not rewritten.
+    pub fn change_password(&self, new_pass: &str) -> Result<()> {
+        let Some(k) = &self.keys else { bail!(tr!("rs.not_encrypted")) };
+        self.be.put(KEYS_KEY, &k.to_keyfile(new_pass, KdfParams::default())?)
+    }
+
+    pub fn open_with(be: Arc<dyn Backend>, label: &str, pass: Option<&str>) -> Result<Repo> {
         let f = be.get("format").with_context(|| tr!("rs.not_a_repo", path = label))?;
         let f = String::from_utf8_lossy(&f);
-        if f.trim() != FORMAT {
-            bail!(tr!("rs.unsupported_format", v = f.trim()));
-        }
+        let keys = match f.trim() {
+            FORMAT => None,
+            FORMAT_ENC => {
+                let Some(pass) = pass else { bail!(tr!("rs.password_required")) };
+                let raw = be.get(KEYS_KEY).with_context(|| tr!("rs.keyfile_bad"))?;
+                Some(Keys::from_keyfile(&raw, pass)?)
+            }
+            v => bail!(tr!("rs.unsupported_format", v = v)),
+        };
         let repo = Repo {
             be,
+            keys,
             packs: RwLock::new(vec![]),
             index: RwLock::new(HashMap::new()),
             writer: Mutex::new(None),
         };
         repo.load_index()?;
         Ok(repo)
+    }
+
+    // ---------- sealing (identity when the repository is not encrypted) ----------
+
+    fn chunk_id(&self, data: &[u8]) -> String {
+        match &self.keys {
+            Some(k) => k.chunk_id(data),
+            None => blake3::hash(data).to_hex().to_string(),
+        }
+    }
+
+    fn put_sealed(&self, key: &str, data: &[u8]) -> Result<()> {
+        match &self.keys {
+            Some(k) => self.be.put(key, &k.seal(key, data)?),
+            None => self.be.put(key, data),
+        }
+    }
+
+    fn get_sealed(&self, key: &str) -> Result<Vec<u8>> {
+        let raw = self.be.get(key)?;
+        match &self.keys {
+            Some(k) => k.open(key, &raw),
+            None => Ok(raw),
+        }
     }
 
     fn load_index(&self) -> Result<()> {
@@ -176,7 +247,7 @@ impl Repo {
             if !present.contains(Self::pack_key(name).as_str()) {
                 continue;
             }
-            let idx: PackIndex = serde_json::from_slice(&self.be.get(key)?)
+            let idx: PackIndex = serde_json::from_slice(&self.get_sealed(key)?)
                 .with_context(|| tr!("rs.corrupt_index", path = key))?;
             let pi = packs.len() as u32;
             packs.push(name.to_string());
@@ -242,11 +313,11 @@ impl Repo {
 
     /// Store a chunk. Returns (hash, bytes written, new?).
     pub fn put_chunk(&self, data: &[u8], try_compress: bool, level: i32) -> Result<(String, u64, bool)> {
-        let hash = blake3::hash(data).to_hex().to_string();
+        let hash = self.chunk_id(data);
         if self.has_chunk(&hash) {
             return Ok((hash, 0, false));
         }
-        let enc = Self::encode(data, try_compress, level)?;
+        let enc = self.seal_chunk(&hash, Self::encode(data, try_compress, level)?)?;
         let stored = self.append_raw(&hash, &enc)?;
         Ok((hash, stored, stored > 0))
     }
@@ -290,7 +361,7 @@ impl Repo {
             return Ok(());
         }
         self.be.put(&Self::pack_key(&pk.name), &pk.buf)?;
-        self.be.put(&Self::idx_key(&pk.name), &serde_json::to_vec(&PackIndex { chunks: pk.entries })?)?;
+        self.put_sealed(&Self::idx_key(&pk.name), &serde_json::to_vec(&PackIndex { chunks: pk.entries })?)?;
         Ok(())
     }
 
@@ -315,7 +386,31 @@ impl Repo {
         self.be.get_range(&Self::pack_key(&name), loc.off, loc.len as usize)
     }
 
-    fn decode(raw: &[u8]) -> Result<Vec<u8>> {
+    /// Encrypted repositories wrap every encoded chunk as [2][nonce][ciphertext].
+    fn seal_chunk(&self, id: &str, encoded: Vec<u8>) -> Result<Vec<u8>> {
+        match &self.keys {
+            None => Ok(encoded),
+            Some(k) => {
+                let sealed = k.seal(id, &encoded)?;
+                let mut out = Vec::with_capacity(sealed.len() + 1);
+                out.push(2);
+                out.extend_from_slice(&sealed);
+                Ok(out)
+            }
+        }
+    }
+
+    fn decode(&self, raw: &[u8], id: &str) -> Result<Vec<u8>> {
+        let inner;
+        let raw = match (&self.keys, raw.first()) {
+            (Some(k), Some(2)) => {
+                inner = k.open(id, &raw[1..])?;
+                &inner[..]
+            }
+            // an encrypted repository never accepts plain chunks (downgrade protection)
+            (Some(_), _) | (None, Some(2)) => bail!(tr!("rs.bad_chunk")),
+            (None, _) => raw,
+        };
         match raw.first() {
             Some(0) => Ok(raw[1..].to_vec()),
             Some(1) => Ok(zstd::stream::decode_all(&raw[1..])?),
@@ -330,8 +425,8 @@ impl Repo {
             .unwrap()
             .get(hash)
             .ok_or_else(|| anyhow!(tr!("rs.chunk_missing", h = hash)))?;
-        let data = Self::decode(&self.read_raw(loc)?)?;
-        if verify && blake3::hash(&data).to_hex().as_str() != hash {
+        let data = self.decode(&self.read_raw(loc)?, hash)?;
+        if verify && self.chunk_id(&data) != hash {
             bail!(tr!("rs.chunk_corrupt", h = hash));
         }
         Ok(data)
@@ -343,7 +438,7 @@ impl Repo {
         let mut v = vec![];
         for (key, _) in self.be.list("snapshots/")? {
             if key.ends_with(".meta.json") {
-                if let Ok(m) = serde_json::from_slice::<Meta>(&self.be.get(&key)?) {
+                if let Ok(m) = serde_json::from_slice::<Meta>(&self.get_sealed(&key)?) {
                     v.push(m);
                 }
             }
@@ -373,7 +468,7 @@ impl Repo {
 
     pub fn load_snapshot(&self, spec: &str) -> Result<Snapshot> {
         let id = self.resolve(spec)?;
-        let raw = self.be.get(&Self::snap_key(&id))?;
+        let raw = self.get_sealed(&Self::snap_key(&id))?;
         Ok(serde_json::from_slice(&zstd::stream::decode_all(&raw[..])?)?)
     }
 
@@ -397,9 +492,9 @@ impl Repo {
     pub fn save_snapshot(&self, s: &Snapshot) -> Result<()> {
         let id = &s.meta.id;
         let z = zstd::stream::encode_all(&serde_json::to_vec(s)?[..], 9)?;
-        self.be.put(&Self::snap_key(id), &z)?;
+        self.put_sealed(&Self::snap_key(id), &z)?;
         // meta last: the snapshot "exists" only when it is complete
-        self.be.put(&Self::meta_key(id), &serde_json::to_vec_pretty(&s.meta)?)?;
+        self.put_sealed(&Self::meta_key(id), &serde_json::to_vec_pretty(&s.meta)?)?;
         Ok(())
     }
 
@@ -454,7 +549,7 @@ impl Repo {
             }
         }
         for name in names {
-            let idx: PackIndex = serde_json::from_slice(&self.be.get(&Self::idx_key(&name))?)?;
+            let idx: PackIndex = serde_json::from_slice(&self.get_sealed(&Self::idx_key(&name))?)?;
             let used: Vec<_> = idx.chunks.iter().filter(|(h, _, _)| referenced.contains(h)).collect();
             if used.len() == idx.chunks.len() {
                 continue;
@@ -471,7 +566,7 @@ impl Repo {
                     buf.extend_from_slice(&src[o..o + l]);
                 }
                 self.be.put(&Self::pack_key(&nn), &buf)?;
-                self.be.put(&Self::idx_key(&nn), &serde_json::to_vec(&PackIndex { chunks: entries })?)?;
+                self.put_sealed(&Self::idx_key(&nn), &serde_json::to_vec(&PackIndex { chunks: entries })?)?;
             }
             self.be.delete(&Self::idx_key(&name))?;
             self.be.delete(&Self::pack_key(&name))?;
@@ -614,7 +709,7 @@ mod tests {
         assert_eq!(repo.list_meta().unwrap().len(), 2);
 
         // reopen from the same bytes: nothing depends on in-process state
-        let repo = Repo::open_with(mem.clone(), "mem").unwrap();
+        let repo = Repo::open_with(mem.clone(), "mem", None).unwrap();
         let out = d.path().join("out");
         ops::restore(&repo, "latest", &out, &prog).unwrap();
         assert_eq!(tree(&vault), tree(&out));
@@ -648,7 +743,105 @@ mod tests {
     fn open_rejects_unknown_format() {
         let mem = Arc::new(MemBackend::default());
         mem.raw_put("format", b"archivist-repo-v99");
-        assert!(Repo::open_with(mem, "mem").is_err());
+        assert!(Repo::open_with(mem, "mem", None).is_err());
+    }
+
+    fn enc_repo(mem: &Arc<MemBackend>) -> Repo {
+        Repo::init_encrypted_with(mem.clone(), "pw", KdfParams::fast()).unwrap()
+    }
+
+    #[test]
+    fn encrypted_lifecycle_and_nothing_readable_at_rest() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        fs::write(vault.join("Notes/SecretName.md"), "TOP-SECRET-MARKER ".repeat(300)).unwrap();
+        let mem = Arc::new(MemBackend::default());
+        let repo = enc_repo(&mem);
+        assert!(repo.is_encrypted());
+        let prog = Progress::default();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        fs::write(vault.join("Notes/c.md"), "second").unwrap();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+
+        // no stored blob (except the format marker) contains plaintext, names or the vault path
+        for k in mem.keys() {
+            if k == "format" {
+                continue;
+            }
+            let raw = mem.get_raw(&k);
+            for needle in ["TOP-SECRET-MARKER", "SecretName", "Notes", "\"vault\"", "hello"] {
+                assert!(!raw.windows(needle.len()).any(|w| w == needle.as_bytes()), "{k} leaks {needle}");
+            }
+        }
+
+        // reopen with the password: restore, verify, gc all work
+        let repo = Repo::open_with(mem.clone(), "mem", Some("pw")).unwrap();
+        let out = d.path().join("out");
+        ops::restore(&repo, "latest", &out, &prog).unwrap();
+        assert_eq!(tree(&vault), tree(&out));
+        assert!(ops::verify(&repo, true, &prog).unwrap().ok);
+        let first = repo.list_meta().unwrap()[0].id.clone();
+        repo.delete_snapshot(&first).unwrap();
+        ops::gc(&repo).unwrap();
+        let out2 = d.path().join("out2");
+        ops::restore(&repo, "latest", &out2, &prog).unwrap();
+        assert_eq!(tree(&vault), tree(&out2));
+    }
+
+    #[test]
+    fn wrong_or_missing_password_is_refused() {
+        let mem = Arc::new(MemBackend::default());
+        enc_repo(&mem);
+        let e = |r: Result<Repo>| r.err().unwrap().to_string();
+        assert!(e(Repo::open_with(mem.clone(), "m", None)).contains("password"));
+        assert!(e(Repo::open_with(mem.clone(), "m", Some("nope"))).to_lowercase().contains("password"));
+    }
+
+    #[test]
+    fn change_password_keeps_data_readable() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        let mem = Arc::new(MemBackend::default());
+        let repo = enc_repo(&mem);
+        let prog = Progress::default();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        repo.change_password("second").unwrap();
+        assert!(Repo::open_with(mem.clone(), "m", Some("pw")).is_err());
+        let repo = Repo::open_with(mem.clone(), "m", Some("second")).unwrap();
+        let out = d.path().join("out");
+        ops::restore(&repo, "latest", &out, &prog).unwrap();
+        assert_eq!(tree(&vault), tree(&out));
+    }
+
+    #[test]
+    fn tampering_is_detected() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        let mem = Arc::new(MemBackend::default());
+        let repo = enc_repo(&mem);
+        let prog = Progress::default();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        // flip one byte in a pack: full verify must report corruption, restore must fail
+        let pack = mem.keys().into_iter().find(|k| k.ends_with(".pack")).unwrap();
+        let mut raw = mem.get_raw(&pack);
+        let mid = raw.len() / 2;
+        raw[mid] ^= 0xff;
+        mem.raw_put(&pack, &raw);
+        let repo = Repo::open_with(mem.clone(), "m", Some("pw")).unwrap();
+        assert!(!ops::verify(&repo, true, &prog).unwrap().ok);
+        let rep = ops::restore(&repo, "latest", &d.path().join("out"), &prog).unwrap();
+        assert!(!rep.errors.is_empty(), "restore must report the damaged file");
+    }
+
+    #[test]
+    fn plain_chunks_are_rejected_in_encrypted_repo() {
+        let mem = Arc::new(MemBackend::default());
+        let repo = enc_repo(&mem);
+        assert!(repo.decode(&[0, 1, 2, 3], "id").is_err());
+        let plain = Repo::init_with(Arc::new(MemBackend::default())).unwrap();
+        assert!(plain.decode(&[2, 1, 2, 3], "id").is_err());
     }
 }
-
