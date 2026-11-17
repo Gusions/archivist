@@ -60,6 +60,7 @@ No bundled browser: the binary is a few MB.
 - **Block-level deduplication** (FastCDC + BLAKE3).
 - **Lossless compression** (zstd) where it helps, none where it does not.
 - **Exact restore**: contents, modification times, empty folders.
+- **Encryption** (optional, new archives): XChaCha20-Poly1305 with an Argon2id passphrase; contents, file names and vault path are encrypted.
 - **Integrity checks**: quick (all blocks present) or full (re-read and re-hash every block).
 - **Retention policy**: latest N plus daily, weekly, monthly. The newest snapshot is never deleted.
 - **Export** any snapshot as a portable `.tar.zst`.
@@ -82,6 +83,8 @@ append to pack file (~64 MB)  -->  snapshot written last = visible only when com
 
 | Command | What it does |
 |---|---|
+| `archivist init --encrypt` | Create an encrypted archive (asks for a password) |
+| `archivist passwd` | Change the password (data is not rewritten) |
 | `archivist backup` | Create a snapshot |
 | `archivist list` / `stats` | List snapshots / show sizes and ratio |
 | `archivist verify [--full]` | Check integrity |
@@ -129,7 +132,7 @@ No. It protects one thing, an Obsidian vault, with history and integrity checks.
 No, and by design. Photos and PDFs are already compressed, so they are stored unchanged. You save space on text, on repeated content and on history, not on media.
 
 **Is the archive encrypted?**
-Not yet. If it holds sensitive data, keep it on an encrypted volume (FileVault, BitLocker, VeraCrypt). Encryption is the main planned feature.
+Optionally. Create an encrypted archive with `archivist init --encrypt`; contents, file names, the directory tree and the vault path are encrypted and authenticated (XChaCha20-Poly1305, key from your password via Argon2id). Not hidden: the number of snapshots, their timestamps and blob sizes. **If you lose the password the data cannot be recovered.** Encrypted archives currently work from the command line only (the window and web UI cannot unlock them yet), and existing plain archives are not converted. For scripts set `ARCHIVIST_PASSWORD` or `ARCHIVIST_PASSWORD_FILE`; otherwise the CLI asks. Older Archivist versions refuse to open encrypted archives.
 
 **What is not preserved?**
 Symlinks are skipped; Unix permissions and extended attributes are not stored (modification times are).
