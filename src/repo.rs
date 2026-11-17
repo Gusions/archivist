@@ -15,7 +15,10 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, RwLock};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 const FORMAT: &str = "archivist-repo-v1";
 const PACK_TARGET: u64 = 64 * 1024 * 1024;
@@ -75,11 +78,59 @@ pub struct Repo {
     writer: Mutex<Option<OpenPack>>,
 }
 
-pub struct RepoLock(PathBuf);
+/// How often the lock owner touches the lock file, and how long a lock may go
+/// untouched before it is considered abandoned (crashed process).
+const LOCK_HEARTBEAT: Duration = Duration::from_secs(15);
+const LOCK_STALE: Duration = Duration::from_secs(120);
+
+/// Exclusive repository lock. A background heartbeat keeps the file fresh while
+/// the owner is alive, so a long backup is never mistaken for a dead one.
+pub struct RepoLock {
+    path: PathBuf,
+    token: String,
+    stop: Option<Sender<()>>,
+    beat: Option<JoinHandle<()>>,
+}
+
 impl Drop for RepoLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
+        drop(self.stop.take());
+        if let Some(h) = self.beat.take() {
+            let _ = h.join();
+        }
+        // only remove the lock if it is still ours
+        if fs::read_to_string(&self.path).is_ok_and(|c| c == self.token) {
+            let _ = fs::remove_file(&self.path);
+        }
     }
+}
+
+/// Write a file atomically and durably: temp file, fsync, rename, fsync of the
+/// parent directory. A crash leaves either the old file or the new one, never a
+/// partial one.
+pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
+    let tmp = path.with_extension(format!(
+        "{}.tmp",
+        path.extension().and_then(|e| e.to_str()).unwrap_or("dat")
+    ));
+    {
+        let mut f = File::create(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+    }
+    fs::rename(&tmp, path)?;
+    sync_dir(path.parent().unwrap_or_else(|| Path::new(".")));
+    Ok(())
+}
+
+/// Flush a directory entry to disk (no-op where unsupported, e.g. Windows).
+pub(crate) fn sync_dir(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(d) = File::open(dir) {
+        let _ = d.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -101,10 +152,13 @@ impl Repo {
                 bail!(tr!("rs.repo_not_empty", path = root.display()));
             }
             fs::create_dir_all(root)?;
-            fs::write(root.join("format"), FORMAT)?;
         }
         fs::create_dir_all(root.join("packs"))?;
         fs::create_dir_all(root.join("snapshots"))?;
+        // the format marker last: its presence means the layout is complete
+        if !Self::is_repo(root) {
+            write_atomic(&root.join("format"), FORMAT.as_bytes())?;
+        }
         Self::open(root)
     }
 
@@ -169,19 +223,31 @@ impl Repo {
                 .modified()
                 .ok()
                 .and_then(|t| t.elapsed().ok())
-                .map(|d| d.as_secs() > 12 * 3600)
+                .map(|d| d > LOCK_STALE)
                 .unwrap_or(false);
             if stale {
                 let _ = fs::remove_file(&p);
             }
         }
+        let token = format!("{}:{:016x}", std::process::id(), rand::random::<u64>());
         match OpenOptions::new().write(true).create_new(true).open(&p) {
             Ok(mut f) => {
-                let _ = write!(f, "{}", std::process::id());
-                Ok(RepoLock(p))
+                f.write_all(token.as_bytes())?;
+                f.sync_all()?;
             }
             Err(_) => bail!(tr!("rs.repo_busy")),
         }
+        let (tx, rx) = mpsc::channel::<()>();
+        let hb_path = p.clone();
+        let beat = std::thread::spawn(move || {
+            // recv_timeout returns Err(Disconnected) as soon as the lock is dropped
+            while let Err(mpsc::RecvTimeoutError::Timeout) = rx.recv_timeout(LOCK_HEARTBEAT) {
+                if let Ok(f) = OpenOptions::new().write(true).open(&hb_path) {
+                    let _ = f.set_modified(std::time::SystemTime::now());
+                }
+            }
+        });
+        Ok(RepoLock { path: p, token, stop: Some(tx), beat: Some(beat) })
     }
 
     pub fn has_chunk(&self, h: &str) -> bool {
@@ -258,9 +324,11 @@ impl Repo {
             let _ = fs::remove_file(self.pack_path(&pk.name));
             return Ok(());
         }
-        let tmp = self.root.join("packs").join(format!("{}.idx.tmp", pk.name));
-        fs::write(&tmp, serde_json::to_vec(&PackIndex { chunks: pk.entries })?)?;
-        fs::rename(&tmp, self.idx_path(&pk.name))?;
+        drop(pk.w);
+        // pack content is already on disk; make its directory entry durable too,
+        // then publish the index atomically (the index makes the pack visible)
+        sync_dir(&self.root.join("packs"));
+        write_atomic(&self.idx_path(&pk.name), &serde_json::to_vec(&PackIndex { chunks: pk.entries })?)?;
         Ok(())
     }
 
@@ -369,13 +437,9 @@ impl Repo {
     pub fn save_snapshot(&self, s: &Snapshot) -> Result<()> {
         let id = &s.meta.id;
         let z = zstd::stream::encode_all(&serde_json::to_vec(s)?[..], 9)?;
-        let tmp = self.snap_dir().join(format!("{id}.snap.tmp"));
-        fs::write(&tmp, z)?;
-        fs::rename(&tmp, self.snap_dir().join(format!("{id}.snap.zst")))?;
-        // il meta per ultimo: lo snapshot "esiste" solo quando è completo
-        let tmp = self.snap_dir().join(format!("{id}.meta.tmp"));
-        fs::write(&tmp, serde_json::to_vec_pretty(&s.meta)?)?;
-        fs::rename(&tmp, self.snap_dir().join(format!("{id}.meta.json")))?;
+        write_atomic(&self.snap_dir().join(format!("{id}.snap.zst")), &z)?;
+        // meta last: the snapshot "exists" only when it is complete
+        write_atomic(&self.snap_dir().join(format!("{id}.meta.json")), &serde_json::to_vec_pretty(&s.meta)?)?;
         Ok(())
     }
 
@@ -456,7 +520,8 @@ impl Repo {
                 }
                 w.flush()?;
                 w.get_ref().sync_all()?;
-                fs::write(self.idx_path(&nn), serde_json::to_vec(&PackIndex { chunks: entries })?)?;
+                drop(w);
+                write_atomic(&self.idx_path(&nn), &serde_json::to_vec(&PackIndex { chunks: entries })?)?;
                 newname = Some(nn);
             }
             let _ = newname;
@@ -469,5 +534,130 @@ impl Repo {
         self.load_index()?;
         let after = self.stats()?.disk_bytes;
         Ok(before.saturating_sub(after))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backup::{run_backup, Progress};
+    use crate::ops;
+
+    fn make_vault(dir: &Path) {
+        fs::create_dir_all(dir.join("Notes/empty")).unwrap();
+        fs::write(dir.join("Notes/a.md"), "# A\n".repeat(5000)).unwrap();
+        fs::write(dir.join("Notes/b.md"), "hello").unwrap();
+        fs::write(dir.join("img.png"), (0..200_000u32).map(|i| (i * 31 % 251) as u8).collect::<Vec<_>>()).unwrap();
+    }
+
+    fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut v: Vec<_> = walkdir::WalkDir::new(root)
+            .into_iter()
+            .flatten()
+            .filter(|e| e.file_type().is_file())
+            .map(|e| {
+                (e.path().strip_prefix(root).unwrap().to_string_lossy().to_string(), fs::read(e.path()).unwrap())
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn lock_is_exclusive_and_released() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = Repo::init(&d.path().join("r")).unwrap();
+        let l = repo.lock().unwrap();
+        assert!(repo.lock().is_err());
+        drop(l);
+        assert!(!repo.root.join("lock").exists());
+        assert!(repo.lock().is_ok());
+    }
+
+    #[test]
+    fn stale_lock_is_taken_over_fresh_one_is_not() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = Repo::init(&d.path().join("r")).unwrap();
+        let p = repo.root.join("lock");
+        fs::write(&p, "999999").unwrap();
+        assert!(repo.lock().is_err(), "a fresh foreign lock must be respected");
+        let old = std::time::SystemTime::now() - Duration::from_secs(3600);
+        File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
+        assert!(repo.lock().is_ok(), "an abandoned lock must be taken over");
+    }
+
+    #[test]
+    fn dropping_old_lock_does_not_remove_new_owners_lock() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = Repo::init(&d.path().join("r")).unwrap();
+        let first = repo.lock().unwrap();
+        // simulate takeover by another process
+        fs::write(repo.root.join("lock"), "other:owner").unwrap();
+        drop(first);
+        assert!(repo.root.join("lock").exists());
+    }
+
+    #[test]
+    fn write_atomic_replaces_and_leaves_no_tmp() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("x.json");
+        write_atomic(&p, b"one").unwrap();
+        write_atomic(&p, b"two").unwrap();
+        assert_eq!(fs::read(&p).unwrap(), b"two");
+        let names: Vec<_> = fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names.len(), 1);
+    }
+
+    #[test]
+    fn backup_restore_roundtrip_is_byte_exact() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        let repo = Repo::init(&d.path().join("r")).unwrap();
+        let prog = Progress::default();
+        let rep = run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        assert!(rep.snapshot.is_some() && !rep.unchanged);
+
+        let out = d.path().join("out");
+        ops::restore(&repo, "latest", &out, &prog).unwrap();
+        assert_eq!(tree(&vault), tree(&out));
+        assert!(out.join("Notes/empty").is_dir(), "empty folders are restored");
+
+        // second run with no changes creates no new snapshot
+        let rep2 = run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        assert!(rep2.unchanged);
+    }
+
+    #[test]
+    fn interrupted_backup_leaves_repo_valid_and_old_snapshots_intact() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        let rroot = d.path().join("r");
+        let prog = Progress::default();
+        {
+            let repo = Repo::init(&rroot).unwrap();
+            run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        }
+        // debris of a crashed backup: pack without index, partial index and snapshot temp files
+        fs::write(rroot.join("packs/pack-deadbeefdeadbeef.pack"), vec![7u8; 4096]).unwrap();
+        fs::write(rroot.join("packs/pack-deadbeefdeadbeef.idx.tmp"), b"{\"chunks\":[[\"ab").unwrap();
+        fs::write(rroot.join("snapshots/20990101-000000.snap.zst"), b"partial").unwrap();
+        fs::write(rroot.join("snapshots/20990101-000000.meta.tmp"), b"{").unwrap();
+
+        let repo = Repo::open(&rroot).unwrap();
+        // the half-written snapshot has no meta, so it is invisible
+        assert_eq!(repo.list_meta().unwrap().len(), 1);
+        let out = d.path().join("out");
+        ops::restore(&repo, "latest", &out, &prog).unwrap();
+        assert_eq!(tree(&vault), tree(&out));
+        assert!(ops::verify(&repo, true, &prog).unwrap().ok);
+
+        // the next backup works and gc removes the orphaned pack
+        fs::write(vault.join("Notes/c.md"), "new").unwrap();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        ops::gc(&repo).unwrap();
+        assert!(!rroot.join("packs/pack-deadbeefdeadbeef.pack").exists());
+        assert!(!rroot.join("packs/pack-deadbeefdeadbeef.idx.tmp").exists());
     }
 }
