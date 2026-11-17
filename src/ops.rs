@@ -1,5 +1,5 @@
 use crate::backup::Progress;
-use crate::repo::{FileEntry, Repo};
+use crate::repo::{FileEntry, Repo, Snapshot};
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Datelike, FixedOffset};
 use rayon::prelude::*;
@@ -65,19 +65,42 @@ pub struct RestoreReport {
     pub errors: Vec<String>,
 }
 
+/// Does `path` fall under one of the selectors (an exact file, or a folder and everything in it)?
+fn selected(path: &str, only: &[String]) -> bool {
+    only.iter().any(|s| {
+        let s = s.trim_matches('/');
+        !s.is_empty() && (path == s || path.strip_prefix(s).is_some_and(|r| r.starts_with('/')))
+    })
+}
+
+#[allow(dead_code)] // convenience wrapper, used by tests
 pub fn restore(repo: &Repo, spec: &str, dest: &Path, prog: &Progress) -> Result<RestoreReport> {
+    restore_selected(repo, spec, dest, None, prog)
+}
+
+/// Restore a snapshot, or only the files/folders listed in `only` (paths relative to the vault).
+pub fn restore_selected(repo: &Repo, spec: &str, dest: &Path, only: Option<&[String]>, prog: &Progress) -> Result<RestoreReport> {
     let snap = repo.load_snapshot(spec)?;
     if dest.exists() && fs::read_dir(dest)?.next().is_some() {
         bail!(tr!("rs.dest_not_empty", p = dest.display()));
     }
+    let entries: Vec<&FileEntry> = match only {
+        Some(sel) => snap.entries.iter().filter(|e| selected(&e.path, sel)).collect(),
+        None => snap.entries.iter().collect(),
+    };
+    if only.is_some() && entries.is_empty() {
+        bail!(tr!("rs.no_match"));
+    }
     fs::create_dir_all(dest)?;
     for d in &snap.dirs {
-        fs::create_dir_all(safe_join(dest, d)?)?;
+        if only.is_none_or(|sel| selected(d, sel)) {
+            fs::create_dir_all(safe_join(dest, d)?)?;
+        }
     }
     prog.reset(&tr!("phase.restoring"));
-    prog.total.store(snap.entries.len() as u64, Relaxed);
+    prog.total.store(entries.len() as u64, Relaxed);
     let errors = Mutex::new(vec![]);
-    snap.entries.par_iter().for_each(|e| {
+    entries.par_iter().for_each(|e| {
         let r = (|| -> Result<()> {
             let target = safe_join(dest, &e.path)?;
             if let Some(parent) = target.parent() {
@@ -96,7 +119,51 @@ pub fn restore(repo: &Repo, spec: &str, dest: &Path, prog: &Progress) -> Result<
             errors.lock().unwrap().push(format!("{}: {err}", e.path));
         }
     });
-    Ok(RestoreReport { files: snap.meta.files, bytes: snap.meta.bytes, errors: errors.into_inner().unwrap() })
+    let (files, bytes) = match only {
+        Some(_) => (entries.len() as u64, entries.iter().map(|e| e.size).sum()),
+        None => (snap.meta.files, snap.meta.bytes),
+    };
+    Ok(RestoreReport { files, bytes, errors: errors.into_inner().unwrap() })
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct FileChange {
+    pub path: String,
+    /// "added" | "modified" | "removed"
+    pub kind: &'static str,
+    /// size in the newer snapshot (the older one for removed files)
+    pub size: u64,
+}
+
+/// What changed between an older and a newer snapshot. Compares content (chunk lists), not
+/// modification times, so a file that was only touched does not show up.
+pub fn diff_snapshots(old: &Snapshot, new: &Snapshot) -> Vec<FileChange> {
+    use std::collections::HashMap;
+    let o: HashMap<&str, &FileEntry> = old.entries.iter().map(|e| (e.path.as_str(), e)).collect();
+    let n: HashMap<&str, &FileEntry> = new.entries.iter().map(|e| (e.path.as_str(), e)).collect();
+    let mut v = vec![];
+    for (p, e) in &n {
+        match o.get(p) {
+            None => v.push(FileChange { path: p.to_string(), kind: "added", size: e.size }),
+            Some(x) if x.chunks != e.chunks => v.push(FileChange { path: p.to_string(), kind: "modified", size: e.size }),
+            _ => {}
+        }
+    }
+    for (p, e) in &o {
+        if !n.contains_key(p) {
+            v.push(FileChange { path: p.to_string(), kind: "removed", size: e.size });
+        }
+    }
+    v.sort_by(|a, b| a.path.cmp(&b.path));
+    v
+}
+
+/// Files whose path contains `query` (case-insensitive). Returns (total matches, first `limit`).
+pub fn find_files<'a>(snap: &'a Snapshot, query: &str, limit: usize) -> (usize, Vec<&'a FileEntry>) {
+    let q = query.trim().to_lowercase();
+    let all: Vec<&FileEntry> = snap.entries.iter().filter(|e| q.is_empty() || e.path.to_lowercase().contains(&q)).collect();
+    let total = all.len();
+    (total, all.into_iter().take(limit).collect())
 }
 
 pub fn export_tar_zst(repo: &Repo, spec: &str, out: &Path, prog: &Progress) -> Result<u64> {
@@ -308,4 +375,46 @@ mod tests {
         assert!(safe_join(Path::new("/dest"), "a/../../b").is_err());
         assert!(safe_join(Path::new("/dest"), "Note/ok.md").is_ok());
     }
+
+    fn entry(p: &str, chunks: &[&str]) -> FileEntry {
+        FileEntry { path: p.into(), size: 10, mtime: 0, chunks: chunks.iter().map(|c| c.to_string()).collect() }
+    }
+    fn snap(entries: Vec<FileEntry>) -> Snapshot {
+        use crate::repo::Meta;
+        Snapshot {
+            meta: Meta { id: "x".into(), created: "2026-01-01T00:00:00.000+00:00".into(), vault: "v".into(), files: entries.len() as u64, bytes: 0, added_bytes: 0 },
+            entries,
+            dirs: vec![],
+        }
+    }
+
+    #[test]
+    fn selectors_match_files_and_folders_only_on_boundaries() {
+        let sel = vec!["Notes".to_string(), "a/b.md".to_string()];
+        assert!(selected("Notes/x.md", &sel) && selected("Notes", &sel) && selected("a/b.md", &sel));
+        assert!(!selected("Notes2/x.md", &sel), "prefix must end at a folder boundary");
+        assert!(!selected("a/b.md.bak", &sel));
+        assert!(!selected("anything", &["".to_string(), "/".to_string()]));
+    }
+
+    #[test]
+    fn diff_reports_added_modified_removed_and_ignores_touched() {
+        let old = snap(vec![entry("keep.md", &["1"]), entry("edit.md", &["2"]), entry("gone.md", &["3"])]);
+        let mut touched = entry("keep.md", &["1"]);
+        touched.mtime = 999;
+        let new = snap(vec![touched, entry("edit.md", &["2", "9"]), entry("new.md", &["4"])]);
+        let d = diff_snapshots(&old, &new);
+        let got: Vec<_> = d.iter().map(|c| (c.path.as_str(), c.kind)).collect();
+        assert_eq!(got, vec![("edit.md", "modified"), ("gone.md", "removed"), ("new.md", "added")]);
+    }
+
+    #[test]
+    fn find_files_is_case_insensitive_and_limited() {
+        let s = snap(vec![entry("Notes/Idea.md", &["1"]), entry("notes/other.md", &["2"]), entry("img.png", &["3"])]);
+        assert_eq!(find_files(&s, "NOTES", 10).0, 2);
+        let (total, first) = find_files(&s, "", 1);
+        assert_eq!((total, first.len()), (3, 1));
+        assert_eq!(find_files(&s, "zzz", 10).0, 0);
+    }
 }
+

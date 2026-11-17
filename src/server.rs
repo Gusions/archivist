@@ -5,7 +5,7 @@ use crate::crypto;
 use crate::repo::Repo;
 use crate::settings::{detect_vaults, expand, Settings};
 use anyhow::Result;
-use axum::extract::{Path as AxPath, Request, State};
+use axum::extract::{Path as AxPath, Query, Request, State};
 use axum::http::{header, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Response};
@@ -248,12 +248,67 @@ async fn run_backup(State(app): State<S>) -> Res {
 struct RestoreReq {
     id: String,
     dest: String,
+    /// only these files or folders (relative to the vault); empty = everything
+    #[serde(default)]
+    paths: Vec<String>,
 }
 async fn run_restore(State(app): State<S>, Json(r): Json<RestoreReq>) -> Res {
     let repo = open_repo(&app)?;
     start_job(&app, "restore", move |p| {
-        Ok(serde_json::to_value(ops::restore(&repo, &r.id, &PathBuf::from(expand(&r.dest)), p)?)?)
+        let only = (!r.paths.is_empty()).then_some(r.paths.as_slice());
+        Ok(serde_json::to_value(ops::restore_selected(&repo, &r.id, &PathBuf::from(expand(&r.dest)), only, p)?)?)
     })
+}
+
+#[derive(Deserialize)]
+struct FilesQ {
+    q: Option<String>,
+    limit: Option<usize>,
+}
+
+/// Files of one snapshot, optionally filtered by a text in the path.
+async fn snap_files(State(app): State<S>, AxPath(id): AxPath<String>, Query(q): Query<FilesQ>) -> Res {
+    let repo = open_repo(&app)?;
+    let limit = q.limit.unwrap_or(300).min(2000);
+    let query = q.q.unwrap_or_default();
+    let v = tokio::task::block_in_place(|| -> Result<Value> {
+        let snap = repo.load_snapshot(&id)?;
+        let (total, files) = ops::find_files(&snap, &query, limit);
+        let files: Vec<Value> = files.iter().map(|e| json!({"path": e.path, "size": e.size, "mtime": e.mtime})).collect();
+        Ok(json!({"id": snap.meta.id, "total": total, "files": files}))
+    })
+    .map_err(bad)?;
+    Ok(Json(v))
+}
+
+#[derive(Deserialize)]
+struct DiffQ {
+    base: Option<String>,
+}
+
+/// What changed in a snapshot compared with `base` (default: the snapshot just before it).
+async fn snap_diff(State(app): State<S>, AxPath(id): AxPath<String>, Query(q): Query<DiffQ>) -> Res {
+    let repo = open_repo(&app)?;
+    let v = tokio::task::block_in_place(|| -> Result<Value> {
+        let id = repo.resolve(&id)?;
+        let metas = repo.list_meta()?;
+        let base = match q.base {
+            Some(b) => Some(repo.resolve(&b)?),
+            None => metas.iter().position(|m| m.id == id).filter(|i| *i > 0).map(|i| metas[i - 1].id.clone()),
+        };
+        let Some(base) = base else {
+            return Ok(json!({"id": id, "base": null}));
+        };
+        let changes = ops::diff_snapshots(&repo.load_snapshot(&base)?, &repo.load_snapshot(&id)?);
+        let count = |k: &str| changes.iter().filter(|c| c.kind == k).count();
+        let (a, m, r) = (count("added"), count("modified"), count("removed"));
+        let total = changes.len();
+        let shown: Vec<_> = changes.into_iter().take(1000).collect();
+        let created = metas.iter().find(|m| m.id == base).map(|m| m.created.clone());
+        Ok(json!({"id": id, "base": base, "base_created": created, "added": a, "modified": m, "removed": r, "total": total, "changes": shown}))
+    })
+    .map_err(bad)?;
+    Ok(Json(v))
 }
 
 async fn run_export(State(app): State<S>, Json(r): Json<RestoreReq>) -> Res {
@@ -350,6 +405,8 @@ pub fn run(
             .route("/api/verify", post(run_verify))
             .route("/api/prune", post(run_prune))
             .route("/api/snapshots/{id}", delete(del_snapshot))
+            .route("/api/snapshots/{id}/files", get(snap_files))
+            .route("/api/snapshots/{id}/diff", get(snap_diff))
             .layer(middleware::from_fn_with_state(app.clone(), guard))
             .with_state(app);
 

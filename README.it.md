@@ -58,6 +58,9 @@ archivist list
 archivist stats
 archivist verify --full
 archivist restore latest ~/Desktop/Ripristino     # la cartella deve essere vuota o nuova
+archivist restore latest ~/Desktop/Una --path Notes/idea.md   # solo un file o una cartella
+archivist files latest --grep idea                # cerca tra i file di uno snapshot
+archivist diff                                    # cosa è cambiato rispetto allo snapshot precedente
 archivist export latest ~/Desktop/vault.tar.zst
 archivist prune                                   # applica la retention delle impostazioni
 ```

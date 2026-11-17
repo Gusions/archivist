@@ -87,6 +87,7 @@ input:focus,select:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 35
 dialog{border:0;border-radius:14px;background:var(--bg);color:var(--ink);padding:0;width:min(520px,calc(100vw - 32px));box-shadow:0 20px 60px rgba(0,0,0,.35),0 0 0 .5px rgba(0,0,0,.2)}
 dialog::backdrop{background:rgba(0,0,0,.28)}
 .dlg{padding:22px 24px}
+#brBody{min-height:320px}
 .dlg h3{margin:0 0 4px;font-size:16px}.dlg .sub{margin:0 0 6px;color:var(--ink2)}
 .dlg h2{margin-left:4px}
 .fld{padding:10px 16px;border-top:1px solid var(--sep)}
@@ -213,6 +214,13 @@ code{font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:v
   <div class="foot"><button class="btn sec" type="button" id="confCancel" data-i18n="btn.cancel"></button><button class="btn" type="submit" id="confOk"></button></div>
 </form></dialog>
 
+<dialog id="browseDlg" style="width:min(680px,calc(100vw - 32px))"><div class="dlg">
+  <h3 id="brTitle"></h3><p class="sub" id="brSub"></p>
+  <div class="seg" role="tablist" id="brTabs" style="margin:10px 0"></div>
+  <div id="brBody"></div>
+  <div class="foot"><button class="btn" type="button" id="brClose" data-i18n="btn.close"></button></div>
+</div></dialog>
+
 <dialog id="unlockDlg"><form method="dialog" class="dlg" id="unlockForm">
   <h3 data-i18n="enc.unlock_title"></h3><p class="sub" data-i18n="enc.unlock_sub"></p>
   <div class="grp"><div class="fld"><label for="unPass" data-i18n="enc.password"></label><input type="password" id="unPass" autocomplete="current-password"></div></div>
@@ -298,7 +306,7 @@ function note(msg,kind){const n=$("note");if(!msg){n.hidden=true;return}n.hidden
 function snapRow(m,full){
   const sub=t("snap.sub",{files:num(m.files),size:fmt(m.bytes),written:fmt(m.added_bytes)});
   const R=`<a data-a="restore" data-id="${m.id}">${esc(t("btn.restore"))}</a>`;
-  const acts=full?`<span class="acts">${R}<a data-a="export" data-id="${m.id}">${esc(t("btn.export"))}</a>${S.snapshots.length>1?`<a class="del" data-a="del" data-id="${m.id}">${esc(t("btn.delete"))}</a>`:""}</span>`:`<span class="acts">${R}</span>`;
+  const acts=full?`<span class="acts"><a data-a="browse" data-id="${m.id}">${esc(t("btn.browse"))}</a>${R}<a data-a="export" data-id="${m.id}">${esc(t("btn.export"))}</a>${S.snapshots.length>1?`<a class="del" data-a="del" data-id="${m.id}">${esc(t("btn.delete"))}</a>`:""}</span>`:`<span class="acts">${R}</span>`;
   return `<div class="row" style="min-height:56px"><span><span class="t">${esc(when(m.created))}</span><span class="sub">${esc(sub)}</span></span>${acts}</div>`;
 }
 const FREQ=[15,60,360,1440];
@@ -385,6 +393,52 @@ async function refresh(){
 async function act(path,method,body){try{note("");await api(path,method,body);await refresh()}catch(e){note(e.message,"bad")}}
 async function saveSettings(patch){const s={...S.settings,...patch};try{await api("settings","POST",s);await refresh()}catch(e){note(e.message,"bad")}}
 
+/* ---- sfoglia snapshot: file e modifiche ---- */
+let br={id:null,tab:"files",q:"",timer:null};
+const fileRow=(p,size,id,kind)=>`<div class="row" style="min-height:38px"><span style="min-width:0;overflow-wrap:anywhere">${kind?`<span class="dot ${kind==="added"?"ok":kind==="modified"?"warn":"bad"}" title="${esc(t("diff."+kind))}"></span>`:""}${esc(p)}</span><span class="acts"><span class="v">${fmt(size)}</span><a data-br-restore="${esc(p)}" data-id="${esc(id)}">${esc(t("btn.restore"))}</a></span></div>`;
+function openBrowse(id){
+  br={id,tab:"files",q:"",timer:null};
+  const m=S.snapshots.find(x=>x.id===id);
+  $("brTitle").textContent=m?when(m.created):id;
+  $("brSub").textContent=m?t("snap.sub",{files:num(m.files),size:fmt(m.bytes),written:fmt(m.added_bytes)}):"";
+  $("brTabs").innerHTML=[["files","browse.files"],["changes","browse.changes"]].map(([v,k])=>`<button type="button" role="tab" data-v="${v}" aria-checked="${v===br.tab}">${esc(t(k))}</button>`).join("");
+  $("brClose").onclick=()=>$("browseDlg").close();
+  $("browseDlg").showModal();loadBrowse();
+}
+async function loadBrowse(){
+  const body=$("brBody");
+  document.querySelectorAll("#brTabs button").forEach(b=>b.setAttribute("aria-checked",String(b.dataset.v===br.tab)));
+  try{
+    if(br.tab==="files"){
+      body.innerHTML=`<div class="grp"><div class="fld"><input type="text" id="brQ" placeholder="${esc(t("browse.search"))}" value="${esc(br.q)}" autocomplete="off" spellcheck="false"></div></div><div class="grp" id="brList" style="margin-top:10px;max-height:46vh;overflow:auto"></div><p class="sub" id="brMore"></p>`;
+      $("brQ").focus();$("brQ").setSelectionRange(br.q.length,br.q.length);await loadFiles();
+    }else{
+      body.innerHTML=`<p class="sub">…</p>`;
+      const d=await api("snapshots/"+encodeURIComponent(br.id)+"/diff");
+      if(!d.base){body.innerHTML=`<div class="grp"><div class="empty">${esc(t("diff.first"))}</div></div>`;return}
+      const sum=t("diff.summary",{a:num(d.added),m:num(d.modified),r:num(d.removed)});
+      const base=d.base_created?t("diff.base",{when:when(d.base_created)}):"";
+      const rows=d.changes.map(c=>fileRow(c.path,c.size,c.kind==="removed"?d.base:d.id,c.kind)).join("");
+      body.innerHTML=`<p class="sub">${esc(base)}<br><b>${esc(sum)}</b></p><div class="grp" style="max-height:46vh;overflow:auto">${rows||`<div class="empty">${esc(t("diff.none"))}</div>`}</div>${d.total>d.changes.length?`<p class="sub">${esc(t("browse.more",{n:num(d.changes.length),total:num(d.total)}))}</p>`:""}`;
+    }
+  }catch(e){body.innerHTML=`<p class="sub" style="color:var(--red)">${esc(e.message)}</p>`}
+}
+async function loadFiles(){
+  const q=br.q,d=await api("snapshots/"+encodeURIComponent(br.id)+"/files?q="+encodeURIComponent(q));
+  if(q!==br.q||br.tab!=="files")return;
+  $("brList").innerHTML=d.files.length?d.files.map(f=>fileRow(f.path,f.size,br.id)).join(""):`<div class="empty">${esc(t("browse.none"))}</div>`;
+  $("brMore").textContent=d.total>d.files.length?t("browse.more",{n:num(d.files.length),total:num(d.total)}):t("browse.count",{n:num(d.total)});
+}
+$("brTabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;br.tab=b.dataset.v;loadBrowse()};
+$("brBody").addEventListener("input",e=>{if(e.target.id!=="brQ")return;br.q=e.target.value;clearTimeout(br.timer);br.timer=setTimeout(()=>loadFiles().catch(x=>note(x.message,"bad")),180)});
+$("brBody").addEventListener("click",async e=>{
+  const a=e.target.closest("[data-br-restore]");if(!a)return;
+  const path=a.dataset.brRestore,id=a.dataset.id;
+  const dest=await askPath({title:t("dlg.restore.title"),sub:path,label:t("dlg.restore.label"),value:"~/Desktop/Restore-"+base(path),ok:t("dlg.restore.ok")});
+  if(!dest)return;
+  $("browseDlg").close();act("restore","POST",{id,dest,paths:[path]});
+});
+
 /* ---- dialoghi ---- */
 function askConfirm({title,sub,ok,danger}){return new Promise(res=>{
   $("confTitle").textContent=title;$("confSub").textContent=sub;$("confOk").textContent=ok||t("btn.confirm");
@@ -403,6 +457,7 @@ document.addEventListener("click",async e=>{
   const a=e.target.closest("[data-a]");if(a){const id=a.dataset.id,k=a.dataset.a;
     if(k==="restore"){const dest=await askPath({title:t("dlg.restore.title"),sub:t("dlg.restore.sub"),label:t("dlg.restore.label"),value:"~/Desktop/Restore-"+id,ok:t("dlg.restore.ok")});if(dest)act("restore","POST",{id,dest})}
     else if(k==="export"){const dest=await askPath({title:t("dlg.export.title"),sub:t("dlg.export.sub"),label:t("dlg.export.label"),value:"~/Desktop/vault-"+id+".tar.zst",ok:t("dlg.export.ok")});if(dest)act("export","POST",{id,dest})}
+    else if(k==="browse"){openBrowse(id)}
     else if(k==="del"){if(await askConfirm({title:t("dlg.delete.title"),sub:t("dlg.delete.sub"),ok:t("btn.delete"),danger:true}))act("snapshots/"+id,"DELETE")}
     return}
   const b=e.target.closest("button");if(!b)return;
