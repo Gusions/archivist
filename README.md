@@ -1,29 +1,68 @@
 # Archivist
 
+<p align="center"><img src="docs/logo.png" width="120" alt="Archivist logo"></p>
+
+*Back up your Obsidian vault. Restore it byte for byte.*
+*Incremental, deduplicated, lossless. One small Rust binary.*
+
 **English** · [Italiano](README.it.md)
 
-Lossless, incremental, deduplicated backup and restore for [Obsidian](https://obsidian.md) vaults.
-One small Rust binary, a native window, no cloud, no account.
+[![Version](https://img.shields.io/badge/version-0.1.0-0A66E8)](Cargo.toml)
+[![Languages](https://img.shields.io/badge/languages-2-0A66E8)](#adding-a-language)
+[![Platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-0A66E8)](#install)
+[![Build](https://github.com/Gusions/archivist/actions/workflows/release.yml/badge.svg)](https://github.com/Gusions/archivist/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0A66E8)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/Gusions/archivist?style=flat&color=0A66E8)](https://github.com/Gusions/archivist/stargazers)
+
+Snapshots, not copies · lossless by design · integrity checks built in · no cloud, no account · translatable
+
+**A vault grows for years. Archivist keeps every backup as a full snapshot, writes only what changed, and never alters your files.**
+
+| What is in the vault | What Archivist does | Quality loss |
+|---|---|---|
+| Notes, text, JSON, CSS | Block-level dedup + zstd compression | None |
+| PNG, JPEG, WebP, PDF, audio, video | Stored as they are (already compressed) | None |
+| Edited note (a few lines) | Writes only the changed blocks, a few KB | None |
+| Moved or duplicated file | Zero extra space | None |
 
 <p align="center">
   <img src="docs/screenshots/overview-light.png" width="49%" alt="Overview, light theme">
   <img src="docs/screenshots/overview-dark.png" width="49%" alt="Overview, dark theme">
 </p>
 
-## Why
+## Quick start
 
-A vault grows for years, and copying it whole every time gets slow and expensive. Archivist keeps every backup as a full snapshot but stores only what changed, and it never degrades your files: restores are byte-identical.
+```bash
+cargo build --release --features window   # needs Rust: https://rustup.rs
+./target/release/archivist                # opens the native window
+```
+
+In the window: pick your vault (Obsidian vaults are detected automatically), pick a backup folder (ideally on another disk), press **Back up now**. That is the whole setup.
+
+Prefer a ready-made build? Download one from [Releases](../../releases). On macOS, `./make-dmg.sh` produces `dist/Archivist.app` and `dist/Archivist.dmg`.
+
+> If Gatekeeper blocks the app on first launch: `xattr -d com.apple.quarantine <path>`
+
+### Platforms
+
+| Platform | Window | Status |
+|---|---|---|
+| macOS (arm64, x64) | WebKit (system) | Built by CI; menu bar and `.dmg` script less tested than Linux |
+| Windows x64 | WebView2 (preinstalled on Win 10/11) | Built by CI |
+| Linux x64 | WebKitGTK | Built and run in CI and in development |
+
+No bundled browser: the binary is a few MB.
 
 ## Features
 
-- **Incremental snapshots**: each backup is a complete picture of the vault, yet only new data is written.
-- **Block-level deduplication** (FastCDC + BLAKE3): editing a few lines costs a few KB, and moved or duplicated files take no extra space.
-- **Lossless compression** (zstd) for text. Already-compressed files (images, PDFs, audio, video) are stored as they are: no quality loss, no wasted time.
-- **Exact restore**: contents, modification times and empty folders.
+- **Incremental snapshots**: each backup is a complete picture of the vault.
+- **Block-level deduplication** (FastCDC + BLAKE3).
+- **Lossless compression** (zstd) where it helps, none where it does not.
+- **Exact restore**: contents, modification times, empty folders.
 - **Integrity checks**: quick (all blocks present) or full (re-read and re-hash every block).
-- **Retention policy**: keep the latest N plus daily, weekly and monthly snapshots. The newest snapshot is never deleted.
-- **Export** any snapshot as a single portable `.tar.zst`.
-- **Native macOS-style UI**, light / dark / system theme, auto-detects your vaults from Obsidian's config.
+- **Retention policy**: latest N plus daily, weekly, monthly. The newest snapshot is never deleted.
+- **Export** any snapshot as a portable `.tar.zst`.
+- **Native macOS-style UI** with light, dark and system themes.
 - **Translatable**: every string lives in `i18n/<code>.json` (English and Italian included).
 
 <p align="center">
@@ -31,55 +70,83 @@ A vault grows for years, and copying it whole every time gets slow and expensive
   <img src="docs/screenshots/settings-dark.png" width="49%" alt="Settings, dark theme">
 </p>
 
-## Install
+## How it works
 
-Download a build from the [Releases](../../releases) page (macOS arm64 / x64, Windows x64, Linux x64), or build it yourself:
-
-```bash
-cargo build --release --features window   # needs Rust: https://rustup.rs
-./target/release/archivist                # opens the native window
+```
+vault files
+   |  split into ~64 KB content-defined chunks (FastCDC)
+   v
+BLAKE3 hash per chunk ---- already stored? ---- yes --> reference only
+   |  no
+   v
+zstd compress (skipped for incompressible types)
+   v
+append to pack file (~64 MB)  -->  snapshot written last = visible only when complete
 ```
 
-The window uses the system web view (WebKit on macOS, WebView2 on Windows, WebKitGTK on Linux): no bundled browser, a binary of a few MB. On macOS, `./make-dmg.sh` produces `dist/Archivist.app` and `dist/Archivist.dmg`.
-
-If Gatekeeper blocks the app on first launch: `xattr -d com.apple.quarantine <path>`.
-
-## Command line
+| Command | What it does |
+|---|---|
+| `archivist backup` | Create a snapshot |
+| `archivist list` / `stats` | List snapshots / show sizes and ratio |
+| `archivist verify [--full]` | Check integrity |
+| `archivist restore <id\|latest> <dir>` | Restore into an empty or new folder |
+| `archivist export <id\|latest> <file>` | Export as `.tar.zst` |
+| `archivist prune` | Apply the retention policy |
+| `archivist ui` | Local web UI in the browser instead of the window |
 
 ```bash
 archivist --repo /Volumes/Disk/ObsidianBackup backup --vault ~/Documents/MyVault
-archivist list
-archivist stats
-archivist verify --full
-archivist restore latest ~/Desktop/Restore    # destination must be empty or new
-archivist export latest ~/Desktop/vault.tar.zst
-archivist prune                               # apply the retention policy
-archivist ui                                  # local web UI in the browser instead of the window
+archivist restore latest ~/Desktop/Restore
 ```
 
-Settings (vault, archive folder, exclusions, retention, theme, language) are saved from the UI to `~/Library/Application Support/Archivist/settings.json` on macOS or `%APPDATA%\Archivist\settings.json` on Windows, and the CLI uses them as defaults.
+Settings (vault, archive folder, exclusions, retention, theme, language) are saved from the UI to `~/Library/Application Support/Archivist/settings.json` (macOS) or `%APPDATA%\Archivist\settings.json` (Windows); the CLI uses them as defaults.
 
-## Background backups
+## Guarantees
 
-The in-app schedule only runs while Archivist is open. For true background runs use the OS scheduler, e.g. on macOS a LaunchAgent at `~/Library/LaunchAgents/it.archivist.backup.plist` running `archivist backup` every hour, or on Windows `schtasks /Create /SC HOURLY /TN "Archivist" /TR "C:\path\archivist.exe backup"`. A ready-made plist is in [README.it.md](README.it.md#backup-in-background).
-
-## How it works, and what it guarantees
-
-- Files are split into ~64 KB content-defined chunks. Each chunk is identified by its BLAKE3 hash and stored once (zstd-compressed) in ~64 MB pack files.
-- A snapshot becomes visible only after it is fully written. An interrupted backup leaves at most orphaned data, cleaned up by the next `prune`. Earlier backups are never modified.
+- A snapshot becomes visible only after it is fully written. An interrupted backup leaves at most orphaned data, cleaned by the next `prune`. Earlier backups are never modified.
 - The local UI listens on `127.0.0.1` only, requires a random token on every call and rejects non-local `Host` headers (DNS-rebinding defense).
 - Restore rejects paths containing `..` and non-empty destinations.
 
-## Known limitations (v0.1)
+## Background backups
 
-- **No encryption yet**: the archive is stored in the clear. If it holds sensitive data, keep it on an encrypted volume (FileVault, BitLocker, VeraCrypt).
-- Symlinks are skipped; Unix permissions and extended attributes are not preserved (modification times are).
-- Don't write to the same archive from several machines at once (the lock is local, not network-wide).
-- macOS-specific code (menu bar, `.dmg` script) is written against the platform APIs but has had less testing than the Linux build.
+The in-app schedule runs only while Archivist is open. For true background runs use the OS scheduler: a LaunchAgent on macOS (ready-made plist in [README.it.md](README.it.md#backup-in-background)) or `schtasks /Create /SC HOURLY /TN "Archivist" /TR "C:\path\archivist.exe backup"` on Windows.
 
 ## Adding a language
 
 Copy `i18n/en.json` to `i18n/xx.json`, translate the values (keep the `{placeholders}`), then add one line to `CATALOGS` in `src/i18n.rs`. Missing keys fall back to English.
+
+## Development
+
+```bash
+cargo test                                  # engine tests
+cargo build --release --features window     # native window build
+```
+
+Layout: `src/repo.rs` (archive format), `src/backup.rs` (chunking and snapshots), `src/ops.rs` (restore, export, verify, retention), `src/server.rs` (local API), `src/window.rs` (native window and menu), `ui/index.html` (interface), `i18n/` (strings).
+
+## FAQ
+
+**Is it a replacement for Time Machine or cloud sync?**
+No. It protects one thing, an Obsidian vault, with history and integrity checks. Keep your other backups.
+
+**Will it shrink my images?**
+No, and by design. Photos and PDFs are already compressed, so they are stored unchanged. You save space on text, on repeated content and on history, not on media.
+
+**Is the archive encrypted?**
+Not yet. If it holds sensitive data, keep it on an encrypted volume (FileVault, BitLocker, VeraCrypt). Encryption is the main planned feature.
+
+**What is not preserved?**
+Symlinks are skipped; Unix permissions and extended attributes are not stored (modification times are).
+
+**Can two machines write to the same archive?**
+Not at the same time. The lock is local, not network-wide.
+
+**Vault with `.git`?**
+It is included like any other folder. Add `.git` to the exclusions if you do not want it.
+
+## Contributing
+
+Issues and pull requests are welcome, especially translations and platform testing.
 
 ## License
 

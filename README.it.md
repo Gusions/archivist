@@ -1,11 +1,22 @@
 # Archivist
 
+<p align="center"><img src="docs/logo.png" width="120" alt="Logo Archivist"></p>
+
+*Fai il backup del tuo vault Obsidian. Ripristinalo byte per byte.*
+*Incrementale, deduplicato, lossless. Un solo piccolo eseguibile Rust.*
+
 [English](README.md) · **Italiano**
 
-<p align="center"><img src="docs/screenshots/overview-light.png" width="760" alt="Archivist — Panoramica"></p>
+**English** · [Italiano](README.it.md)
 
-Backup incrementale, deduplicato e compresso **senza perdita** per vault Obsidian.
-Un solo eseguibile (Rust), nessun cloud, nessun account. UI web locale minimalista + CLI.
+Snapshot, non copie · lossless per costruzione · verifica integrità inclusa · niente cloud, niente account · traducibile
+
+**Un vault cresce per anni. Archivist conserva ogni backup come snapshot completo, scrive solo ciò che è cambiato e non altera mai i tuoi file.**
+
+<p align="center">
+  <img src="docs/screenshots/overview-light.png" width="49%" alt="Panoramica, tema chiaro">
+  <img src="docs/screenshots/overview-dark.png" width="49%" alt="Panoramica, tema scuro">
+</p>
 
 ## Cosa fa
 
