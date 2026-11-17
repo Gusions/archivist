@@ -31,6 +31,9 @@ zstd = { version = "0.13", features = ["zstdmt"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.17", optional = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [features]
 # Finestra nativa (WebKit di sistema su macOS, WebView2 su Windows). Build: cargo build --release --features window
 window = ["dep:wry", "dep:tao", "dep:muda"]
