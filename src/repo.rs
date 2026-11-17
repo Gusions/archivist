@@ -604,7 +604,8 @@ mod tests {
             .flatten()
             .filter(|e| e.file_type().is_file())
             .map(|e| {
-                (e.path().strip_prefix(root).unwrap().to_string_lossy().to_string(), fs::read(e.path()).unwrap())
+                // forward slashes on every platform, so comparisons do not depend on the OS separator
+                (e.path().strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"), fs::read(e.path()).unwrap())
             })
             .collect();
         v.sort();
