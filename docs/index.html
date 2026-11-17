@@ -9,15 +9,16 @@
 /* Plan: dark-first documentation site. Fixed left sidebar (no top bar), one narrow reading column,
    stacked coloured wordmark as the hero, rounded code panels as the main device. */
 :root{
-  --bg:#0F0F0F;--panel:#1A1A19;--panel2:#161615;--ink:#E4E3DD;--muted:#8E8D88;--line:#262624;--hover:#222221;
-  --olive:#A8B45C;--blue:#6C9BD2;--orange:#E08B5B;--grey:#9B9A96;--cream:#F1F0E7;--red:#E5766B;--green:#7FBFA3;
+  --bg:#1C1C1C;--panel:#262626;--ink:#E8E8E8;--ink2:#B4B4B4;--muted:#7D7D7D;--line:#3A3A3A;--hover:#333333;
+  --olive:#199E70;--blue:#3987E5;--orange:#D95926;--grey:#7D7D7D;--cream:#E8E8E8;--red:#D55181;--green:#199E70;
   --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
   --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
   color-scheme:dark;
 }
+/* Colours taken from the Tally plugin palette (series 1-7, neutrals), dark and light. */
 @media(prefers-color-scheme:light){:root{
-  --bg:#FBFBF9;--panel:#F1F0EC;--panel2:#EAE9E4;--ink:#22221F;--muted:#74736E;--line:#E3E2DC;--hover:#ECEBE6;
-  --olive:#7E8A2C;--blue:#3F6FA8;--orange:#C2622E;--grey:#85847F;--cream:#1C1C1A;--red:#C4473C;--green:#2F8061;color-scheme:light}}
+  --bg:#FFFFFF;--panel:#F3F3F3;--ink:#1F1F1F;--ink2:#555555;--muted:#8A8A8A;--line:#DCDCDC;--hover:#E8E8E8;
+  --olive:#008300;--blue:#2A78D6;--orange:#EB6834;--grey:#8A8A8A;--cream:#1F1F1F;--red:#D55181;--green:#008300;color-scheme:light}}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:28px}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
@@ -38,13 +39,17 @@ code,pre{font-family:var(--mono)}
 .nav .sub a.on{color:var(--ink);border-left-color:var(--ink)}
 main{margin-left:236px;padding:64px 28px 120px}
 .col{max-width:530px;margin:0 auto}
-.hero{display:flex;flex-direction:column;align-items:center;justify-content:center;height:360px;margin:0 0 36px;font-weight:700;letter-spacing:-.045em;line-height:.8;user-select:none}
-.hero span{display:block;white-space:nowrap}
-.w1{color:var(--olive);font-size:60px;transform:translateX(-22px) rotate(-82deg);height:40px;margin-bottom:6px;transform-origin:center}
-.w2{color:var(--blue);font-size:76px;transform:rotate(-2.5deg) translateX(-8px)}
-.w3{color:var(--orange);font-size:84px;transform:rotate(-3deg) translateX(6px);margin-top:2px}
-.w4{color:var(--grey);font-size:62px;transform:rotate(-5deg) translateX(18px);margin-top:4px}
-.w5{color:var(--cream);font-size:64px;transform:translateX(4px);margin-top:2px;letter-spacing:-.05em}
+.cairn{position:relative;height:5.2em;font-size:clamp(48px,12vw,68px);font-weight:700;letter-spacing:-.045em;line-height:1;margin:0 0 28px;user-select:none;touch-action:pan-y;cursor:grab}
+.stone{position:absolute;white-space:nowrap;transform-origin:50% 90%;transform:translateX(-50%) translateY(var(--lift,0em)) rotate(var(--tilt));display:block}
+.stone-motion{transform-origin:var(--contact,50% 90%);transform:rotate(var(--wobble,0deg));display:block}
+.s-for{--tilt:-87deg;--contact:10% 58%;color:var(--olive);top:.15em;left:57%}
+.s-vaults{--tilt:-4deg;color:var(--blue);top:1.4em;left:52%}
+.s-kept{--tilt:4deg;color:var(--orange);top:2.2em;left:45%}
+.s-in{--tilt:-8deg;color:var(--grey);top:3.05em;left:53%}
+.s-snap{--tilt:0deg;color:var(--cream);top:3.85em;left:47%}
+.caret{display:inline-block;width:.55em;height:1.05em;vertical-align:-.18em;background:var(--ink2);margin-left:1px;animation:bl 1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+@media(prefers-reduced-motion:reduce){.stone,.stone-motion{transform:translateX(-50%) rotate(var(--tilt))}.stone-motion{transform:none}.caret{animation:none}}
 .lead{font-size:20px;line-height:1.5;margin:0 0 56px}
 .lead a{text-underline-offset:3px}
 .lead .o{color:var(--olive)}.lead .b{color:var(--blue)}.lead .r{color:var(--orange)}
@@ -94,7 +99,7 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 .pal li a:hover,.pal li a.sel{background:var(--hover)}
 .pal li small{color:var(--muted)}
 .mtop{display:none}
-@media(max-width:860px){.side{display:none}main{margin-left:0;padding:20px 18px 80px}.mtop{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.mtop b{font-size:18px}.mtop button{background:var(--panel);border:0;color:var(--ink);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}.cards{grid-template-columns:1fr}.hero{height:320px;transform:scale(.88)}}
+@media(max-width:860px){.side{display:none}main{margin-left:0;padding:20px 18px 80px}.mtop{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.mtop b{font-size:18px}.mtop button{background:var(--panel);border:0;color:var(--ink);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}.cards{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
@@ -114,14 +119,14 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 
 <main id="top"><div class="col">
   <div class="mtop"><b>Archivist</b><button id="openPal2" type="button">Search</button></div>
-  <div class="hero" role="img" aria-label="for vaults kept in snapshots">
-    <span class="w1">for</span><span class="w2">vaults</span><span class="w3">kept</span><span class="w4">in</span><span class="w5">snapshots</span>
+  <div class="cairn" id="cairn" role="img" aria-label="for vaults kept in snapshots">
+    <span class="stone s-for"><span class="stone-motion">for</span></span><span class="stone s-vaults"><span class="stone-motion">vaults</span></span><span class="stone s-kept"><span class="stone-motion">kept</span></span><span class="stone s-in"><span class="stone-motion">in</span></span><span class="stone s-snap"><span class="stone-motion">snapshots</span></span>
   </div>
   <p class="lead">Archivist is a simple backup tool that turns your Obsidian vault into lossless <a class="o" href="#snapshots">snapshots</a>, <a class="b" href="#restore">restores</a>, and <a class="r" href="#verify">checks</a>.</p>
 
   <h2 id="how-it-works" class="top">How it works</h2>
   <p>Each backup is a snapshot of the whole vault. Only the data that changed is written.</p>
-  <div class="panel">
+  <div class="panel demo">
     <div class="ph"><span>Command</span><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
 <pre><code><span class="c-r">archivist</span> backup
 <span class="c-r">archivist</span> list</code></pre>
@@ -132,7 +137,7 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 20261117-155427  179 files  526.9 KB  <span class="c-m">(+1.4 KB)</span></code></pre>
   </div>
   <p>Notes are split into chunks, deduplicated and compressed. Images, PDFs, audio and video are already compressed, so they are stored as they are. Nothing is ever recompressed with loss.</p>
-  <div class="panel">
+  <div class="panel demo">
     <div class="ph"><span>Command</span><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
 <pre><code><span class="c-r">archivist</span> stats</code></pre>
     <div class="ph div"><span>Output</span></div>
@@ -146,7 +151,7 @@ Vault/archive ratio: 3.39x (with the whole history)</code></pre>
 
   <h2 id="terminal">Archivist in your terminal</h2>
   <p>Back up, restore and verify from the command line. See the <a href="#cli" style="text-underline-offset:3px">CLI guide</a> for every command.</p>
-  <div class="panel one"><div class="ph"><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
+  <div class="panel one demo"><div class="ph"><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
 <pre><code><span class="c-r">archivist</span> --repo <span class="c-g">/Volumes/Disk/Backups</span> backup --vault <span class="c-g">~/Documents/Notes</span></code></pre></div>
 
   <h2 id="app">Archivist in your app</h2>
@@ -183,7 +188,7 @@ Vault/archive ratio: 3.39x (with the whole history)</code></pre>
 
   <h2 id="restore">Restore</h2>
   <p>Restore any snapshot into an empty or new folder. Contents, modification times and empty folders come back identical. Your original vault is never touched.</p>
-  <div class="panel">
+  <div class="panel demo">
     <div class="ph"><span>Command</span><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
 <pre><code><span class="c-r">archivist</span> restore latest ~/Desktop/Restore</code></pre>
     <div class="ph div"><span>Output</span></div>
@@ -193,7 +198,7 @@ Vault/archive ratio: 3.39x (with the whole history)</code></pre>
 
   <h2 id="verify">Verify</h2>
   <p>A quick check confirms every needed block is present. A full check re-reads every block and recomputes its BLAKE3 hash.</p>
-  <div class="panel">
+  <div class="panel demo">
     <div class="ph"><span>Command</span><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
 <pre><code><span class="c-r">archivist</span> verify --full</code></pre>
     <div class="ph div"><span>Output</span></div>
@@ -250,6 +255,60 @@ Vault/archive ratio: 3.39x (with the whole history)</code></pre>
     else if(e.key==="Enter"){e.preventDefault();as[sel].click()}};
   res.onclick=function(e){if(e.target.closest("a"))d.close()};
   d.addEventListener("click",function(e){if(e.target===d)d.close()});
+})();
+
+(function(){
+  var reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  /* cairn: stones fall in, then rock when touched; each one drags the stones above it */
+  var root=document.getElementById("cairn");if(!root)return;
+  var els=[].slice.call(root.querySelectorAll(".stone")),n=els.length-1,rocks=[],lifts=[],raf=0,last=0;
+  for(var i=0;i<n;i++){rocks.push({p:0,v:0});lifts.push({p:reduce?0:-(2.6+(n-i)*0.5),v:0,wait:reduce?0:(n-1-i)*9,hit:false})}
+  function step(t){
+    var dt=last?Math.min((t-last)/16.7,2):1;last=t;var busy=false;
+    for(var i=n-1;i>=0;i--){
+      var r=rocks[i],below=i+1<n?rocks[i+1].p:0,L=lifts[i];
+      if(L.wait>0){L.wait-=dt;busy=true;els[i].style.setProperty("--lift",L.p+"em");continue}
+      if(L.p<0||L.v!==0){L.v+=0.007*dt;L.p+=L.v*dt;busy=true;
+        if(L.p>=0){L.p=0;if(L.v>0.05){r.v+=(i%2?1:-1)*L.v*14;L.v=-L.v*0.25}else L.v=0}}
+      r.v+=(below*0.95-r.p)*0.075*dt;r.v*=Math.pow(0.93,dt);r.p+=r.v*dt;
+      if(r.p>4)r.p=4;if(r.p<-4)r.p=-4;
+      if(Math.abs(r.v)>0.003||Math.abs(r.p-below*0.95)>0.003)busy=true;
+      els[i].style.setProperty("--wobble",r.p.toFixed(3)+"deg");els[i].style.setProperty("--lift",L.p.toFixed(4)+"em");
+    }
+    raf=busy?requestAnimationFrame(step):0;if(!busy)last=0;
+  }
+  function wake(){if(!raf&&!reduce)raf=requestAnimationFrame(step)}
+  function kick(i,v){var k=Math.min(i,n-1);rocks[k].v=Math.max(-.9,Math.min(.9,rocks[k].v+v));wake()}
+  var lx=null,lw=-1;
+  function idx(e){var t=e.target.closest&&e.target.closest(".stone");return t?els.indexOf(t):-1}
+  root.addEventListener("pointermove",function(e){var i=idx(e);if(i<0){lx=null;lw=-1;return}
+    var w=Math.max(root.getBoundingClientRect().width,1),dx=lx===null?0:e.clientX-lx;lx=e.clientX;
+    var v=lw!==i?(Math.sign(dx)||1)*.12:Math.max(-.45,Math.min(.45,dx/w*8));lw=i;if(v)kick(i,v)});
+  root.addEventListener("pointerdown",function(e){var i=idx(e);if(i>=0)kick(i,.35)});
+  root.addEventListener("pointerleave",function(){lx=null;lw=-1});
+  wake();
+  /* typed demos: command is typed, then the output appears line by line */
+  function reveal(code,html,count){var tmp=document.createElement("div");tmp.innerHTML=html;var left=count;
+    (function walk(node){[].slice.call(node.childNodes).forEach(function(ch){if(ch.nodeType===3){if(left<=0)ch.remove();else if(ch.data.length>left){ch.data=ch.data.slice(0,left);left=0}else left-=ch.data.length}else walk(ch)})})(tmp);
+    code.innerHTML=tmp.innerHTML}
+  function play(panel){
+    var codes=[].slice.call(panel.querySelectorAll("pre code")),src=codes.map(function(c){return c.innerHTML}),tot=codes.map(function(c){return c.textContent.length});
+    codes.forEach(function(c,i){if(i>0)c.parentElement.style.visibility="hidden";if(i===0){c.innerHTML=""}});
+    var k=0,i=0;
+    function next(){
+      if(i>=codes.length)return;var c=codes[i];
+      if(i>0)c.parentElement.style.visibility="visible";
+      var fast=i>0,stepN=fast?9:1,delay=fast?24:38;
+      (function tick(){k=Math.min(k+stepN,tot[i]);reveal(c,src[i],k);
+        if(i===0)c.insertAdjacentHTML("beforeend",'<span class="caret"></span>');
+        if(k<tot[i])setTimeout(tick,delay);else{if(i===0)c.innerHTML=src[0];i++;k=0;setTimeout(next,i===1?260:120)}})()
+    }
+    next();
+  }
+  if(!reduce&&"IntersectionObserver"in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){io.unobserve(e.target);play(e.target)}})},{threshold:.6});
+    document.querySelectorAll(".panel.demo").forEach(function(p){io.observe(p)});
+  }
 })();
 </script>
 </body>
