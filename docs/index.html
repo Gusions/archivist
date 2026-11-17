@@ -6,19 +6,16 @@
 <title>Archivist</title>
 <meta name="description" content="Lossless, incremental, deduplicated backup and restore for Obsidian vaults.">
 <style>
-/* Plan: dark-first documentation site. Fixed left sidebar (no top bar), one narrow reading column,
+/* Plan: light documentation site. Fixed left sidebar (no top bar), one narrow reading column,
    stacked coloured wordmark as the hero, rounded code panels as the main device. */
 :root{
-  --bg:#1C1C1C;--panel:#262626;--ink:#E8E8E8;--ink2:#B4B4B4;--muted:#7D7D7D;--line:#3A3A3A;--hover:#333333;
-  --olive:#199E70;--blue:#3987E5;--orange:#D95926;--grey:#7D7D7D;--cream:#E8E8E8;--red:#D55181;--green:#199E70;
+  --bg:#FFFFFF;--panel:#F3F3F3;--ink:#1F1F1F;--ink2:#555555;--muted:#8A8A8A;--line:#DCDCDC;--hover:#E8E8E8;
+  --olive:#008300;--blue:#2A78D6;--orange:#EB6834;--grey:#8A8A8A;--cream:#1F1F1F;--red:#D55181;--green:#008300;
   --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
   --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
-  color-scheme:dark;
+  color-scheme:light;
 }
-/* Colours taken from the Tally plugin palette (series 1-7, neutrals), dark and light. */
-@media(prefers-color-scheme:light){:root{
-  --bg:#FFFFFF;--panel:#F3F3F3;--ink:#1F1F1F;--ink2:#555555;--muted:#8A8A8A;--line:#DCDCDC;--hover:#E8E8E8;
-  --olive:#008300;--blue:#2A78D6;--orange:#EB6834;--grey:#8A8A8A;--cream:#1F1F1F;--red:#D55181;--green:#008300;color-scheme:light}}
+/* Colours taken from the Tally plugin palette (light). */
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:28px}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
@@ -176,7 +173,7 @@ Vault/archive ratio: 3.39x (with the whole history)</code></pre>
 
   <h2 id="in-use">Archivist in use</h2>
   <p>A native window with a sidebar, light and dark themes, and settings that apply as you change them. About and Settings sit in the system menu.</p>
-  <div class="shot"><picture><source srcset="screenshots/overview-light.png" media="(prefers-color-scheme: light)"><img src="screenshots/overview-dark.png" alt="Archivist overview: status, recent snapshots and schedule" width="2000" height="1360"></picture></div>
+  <div class="shot"><picture><img src="screenshots/overview-light.png" alt="Archivist overview: status, recent snapshots and schedule" width="2000" height="1360"></picture></div>
 
   <h2 id="snapshots">Snapshots</h2>
   <p>A snapshot appears only after it is completely written, so an interrupted backup never leaves a broken one. Earlier snapshots are never modified. If nothing changed, no new snapshot is created.</p>
