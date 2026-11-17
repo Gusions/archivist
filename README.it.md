@@ -75,6 +75,7 @@ la CLI le usa come default.
 - **Archivi cifrati**: serve la password nel Portachiavi: `archivist keychain save` oppure spunta "Ricorda nel Portachiavi" quando crei o sblocchi l'archivio. `archivist keychain forget` la rimuove.
 - **Windows**: `schtasks /Create /SC HOURLY /TN "Archivist" /TR "C:\\percorso\\archivist.exe backup"`. **Linux**: un timer systemd utente o cron che esegue `archivist backup`. Non ancora automatizzati; per gli archivi cifrati usa `ARCHIVIST_PASSWORD_FILE`.
 - Il backup automatico dentro l'app (Impostazioni, Backup) funziona solo ad app aperta.
+- `ARCHIVIST_CONFIG_DIR` indica un'altra cartella delle impostazioni (profili separati); un agente installato con quella variabile continua a usarla.
 
 ## Come funziona (e garanzie)
 

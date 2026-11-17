@@ -40,7 +40,12 @@ impl Default for Settings {
     }
 }
 
+/// Settings folder. `ARCHIVIST_CONFIG_DIR` overrides the system default (separate profiles, tests);
+/// a background agent installed with it set keeps using the same folder.
 fn path() -> PathBuf {
+    if let Some(d) = std::env::var_os("ARCHIVIST_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        return PathBuf::from(d).join("settings.json");
+    }
     dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("Archivist").join("settings.json")
 }
 

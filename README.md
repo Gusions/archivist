@@ -115,6 +115,7 @@ Settings (vault, archive folder, exclusions, retention, theme, language) are sav
 - **Encrypted archives** need their password in the Keychain for this: `archivist keychain save` or tick "Remember in the Keychain" when you create or unlock the archive. `archivist keychain forget` removes it.
 - **Windows**: `schtasks /Create /SC HOURLY /TN "Archivist" /TR "C:\path\archivist.exe backup"`. **Linux**: a systemd user timer or cron running `archivist backup`. Not automated yet, and encrypted archives need `ARCHIVIST_PASSWORD_FILE` there.
 - The in-app schedule (Settings, Backup, Automatic backup) runs only while Archivist is open.
+- `ARCHIVIST_CONFIG_DIR` points Archivist to another settings folder (separate profiles); an agent installed with it set keeps using it.
 
 ## Adding a language
 

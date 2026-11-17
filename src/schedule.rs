@@ -28,7 +28,16 @@ fn xml_escape(s: &str) -> String {
 }
 
 /// The launchd property list for a backup every `minutes` minutes.
-pub fn plist(label: &str, exe: &Path, minutes: u32, log: &Path) -> String {
+pub fn plist(label: &str, exe: &Path, minutes: u32, log: &Path, env: &[(String, String)]) -> String {
+    let env_block = if env.is_empty() {
+        String::new()
+    } else {
+        let items: String = env
+            .iter()
+            .map(|(k, v)| format!("    <key>{}</key>\n    <string>{}</string>\n", xml_escape(k), xml_escape(v)))
+            .collect();
+        format!("  <key>EnvironmentVariables</key>\n  <dict>\n{items}  </dict>\n")
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -45,6 +54,7 @@ pub fn plist(label: &str, exe: &Path, minutes: u32, log: &Path) -> String {
   <integer>{secs}</integer>
   <key>RunAtLoad</key>
   <true/>
+{env_block}
   <key>ProcessType</key>
   <string>Background</string>
   <key>LowPriorityIO</key>
@@ -58,9 +68,18 @@ pub fn plist(label: &str, exe: &Path, minutes: u32, log: &Path) -> String {
 "#,
         label = xml_escape(label),
         exe = xml_escape(&exe.display().to_string()),
+        env_block = env_block,
         secs = minutes.max(1) * 60,
         log = xml_escape(&log.display().to_string()),
     )
+}
+
+/// Settings the agent must inherit from the installing process (profiles, tests).
+fn inherited_env() -> Vec<(String, String)> {
+    ["ARCHIVIST_CONFIG_DIR", "ARCHIVIST_KEYCHAIN_SERVICE"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()).map(|v| (k.to_string(), v)))
+        .collect()
 }
 
 /// Minutes between runs, read back from a property list written by `plist`.
@@ -134,7 +153,7 @@ pub fn install(exe: &Path, minutes: u32) -> Result<()> {
     if let Some(d) = log.parent() {
         std::fs::create_dir_all(d)?;
     }
-    crate::backend::write_atomic(&p, plist(&label(), exe, minutes, &log).as_bytes())?;
+    crate::backend::write_atomic(&p, plist(&label(), exe, minutes, &log, &inherited_env()).as_bytes())?;
     let dom = domain()?;
     let target = format!("{dom}/{}", label());
     let _ = launchctl(&["bootout", &target]); // not loaded yet is fine
@@ -171,7 +190,8 @@ mod tests {
 
     #[test]
     fn plist_has_the_expected_shape_and_escapes_paths() {
-        let p = plist("it.test", Path::new("/Apps/A&B <x>/archivist"), 30, Path::new("/tmp/l.log"));
+        let p = plist("it.test", Path::new("/Apps/A&B <x>/archivist"), 30, Path::new("/tmp/l.log"), &[]);
+        assert!(!p.contains("EnvironmentVariables"), "no environment block when nothing to inherit");
         assert!(p.contains("<string>it.test</string>"));
         assert!(p.contains("<string>/Apps/A&amp;B &lt;x&gt;/archivist</string>"));
         assert!(p.contains("<string>backup</string>"));
@@ -182,8 +202,17 @@ mod tests {
 
     #[test]
     fn minutes_roundtrip_and_minimum() {
-        assert_eq!(parse_minutes(&plist("l", Path::new("/x"), 90, Path::new("/l"))), Some(90));
-        assert_eq!(parse_minutes(&plist("l", Path::new("/x"), 0, Path::new("/l"))), Some(1), "never less than a minute");
+        assert_eq!(parse_minutes(&plist("l", Path::new("/x"), 90, Path::new("/l"), &[])), Some(90));
+        assert_eq!(parse_minutes(&plist("l", Path::new("/x"), 0, Path::new("/l"), &[])), Some(1), "never less than a minute");
         assert_eq!(parse_minutes("<plist></plist>"), None);
+    }
+
+    #[test]
+    fn inherited_environment_is_written_and_escaped() {
+        let env = vec![("ARCHIVIST_CONFIG_DIR".to_string(), "/tmp/a&b".to_string())];
+        let p = plist("l", Path::new("/x"), 10, Path::new("/l"), &env);
+        assert!(p.contains("<key>EnvironmentVariables</key>"));
+        assert!(p.contains("<key>ARCHIVIST_CONFIG_DIR</key>"));
+        assert!(p.contains("<string>/tmp/a&amp;b</string>"));
     }
 }
