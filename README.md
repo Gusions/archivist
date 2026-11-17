@@ -63,6 +63,7 @@ No bundled browser: the binary is a few MB.
 - **Encryption** (optional, new archives): XChaCha20-Poly1305 with an Argon2id passphrase; contents, file names and vault path are encrypted.
 - **Integrity checks**: quick (all blocks present) or full (re-read and re-hash every block).
 - **Retention policy**: latest N plus daily, weekly, monthly. The newest snapshot is never deleted.
+- **Browse and restore single files**: search a snapshot, see what changed against the previous one, restore one file or folder (app and CLI).
 - **Export** any snapshot as a portable `.tar.zst`.
 - **Native macOS-style UI** with light, dark and system themes.
 - **Translatable**: every string lives in `i18n/<code>.json` (English and Italian included).
@@ -88,7 +89,9 @@ append to pack file (~64 MB)  -->  snapshot written last = visible only when com
 | `archivist backup` | Create a snapshot |
 | `archivist list` / `stats` | List snapshots / show sizes and ratio |
 | `archivist verify [--full]` | Check integrity |
-| `archivist restore <id\|latest> <dir>` | Restore into an empty or new folder |
+| `archivist restore <id\|latest> <dir> [--path P]...` | Restore into an empty or new folder; `--path` restores only those files or folders |
+| `archivist files <id\|latest> [--grep TEXT]` | List the files of a snapshot |
+| `archivist diff [old] [new]` | Show added, modified and removed files between two snapshots |
 | `archivist export <id\|latest> <file>` | Export as `.tar.zst` |
 | `archivist prune` | Apply the retention policy |
 | `archivist ui` | Local web UI in the browser instead of the window |

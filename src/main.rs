@@ -46,8 +46,22 @@ enum Cmd {
     List,
     /// Show sizes and compression/deduplication ratio
     Stats,
-    /// Restore a snapshot (id, prefix or "latest") into an empty folder
-    Restore { snapshot: String, dest: PathBuf },
+    /// Restore a snapshot (id, prefix or "latest") into an empty folder.
+    /// With --path, restore only those files or folders (repeatable).
+    Restore {
+        snapshot: String,
+        dest: PathBuf,
+        #[arg(long = "path")]
+        paths: Vec<String>,
+    },
+    /// List the files of a snapshot, optionally only those whose path contains TEXT
+    Files {
+        snapshot: String,
+        #[arg(long)]
+        grep: Option<String>,
+    },
+    /// Show what changed between two snapshots (default: the one before the newest, and the newest)
+    Diff { old: Option<String>, new: Option<String> },
     /// Export a snapshot as a portable .tar.zst
     Export { snapshot: String, file: PathBuf },
     /// Check integrity (--full re-reads and re-hashes every block)
@@ -182,9 +196,48 @@ fn run() -> Result<()> {
                 println!("{}", tr!("cli.stats.ratio", x = format!("{:.2}", logical as f64 / s.disk_bytes as f64)));
             }
         }
-        Cmd::Restore { snapshot, dest } => {
+        Cmd::Files { snapshot, grep } => {
             let repo = Repo::open(&repo_path(&cli)?)?;
-            let r = ops::restore(&repo, snapshot, dest, &prog)?;
+            let snap = repo.load_snapshot(snapshot)?;
+            let (total, found) = ops::find_files(&snap, grep.as_deref().unwrap_or(""), usize::MAX);
+            for e in found {
+                println!("{:>9}  {}", human(e.size), e.path);
+            }
+            eprintln!("{}", tr!("cli.files_total", n = total));
+        }
+        Cmd::Diff { old, new } => {
+            let repo = Repo::open(&repo_path(&cli)?)?;
+            let metas = repo.list_meta()?;
+            let new_id = match new {
+                Some(n) => repo.resolve(n)?,
+                None => metas.last().map(|m| m.id.clone()).ok_or_else(|| anyhow::anyhow!(tr!("rs.no_snapshots")))?,
+            };
+            let old_id = match old {
+                Some(o) => repo.resolve(o)?,
+                None => {
+                    let i = metas.iter().position(|m| m.id == new_id).unwrap_or(0);
+                    if i == 0 {
+                        bail!(tr!("diff.first"));
+                    }
+                    metas[i - 1].id.clone()
+                }
+            };
+            let changes = ops::diff_snapshots(&repo.load_snapshot(&old_id)?, &repo.load_snapshot(&new_id)?);
+            let count = |k: &str| changes.iter().filter(|c| c.kind == k).count();
+            for c in &changes {
+                let sign = match c.kind {
+                    "added" => '+',
+                    "removed" => '-',
+                    _ => '~',
+                };
+                println!("{sign} {}", c.path);
+            }
+            eprintln!("{}", tr!("cli.diff_summary", a = count("added"), m = count("modified"), r = count("removed")));
+        }
+        Cmd::Restore { snapshot, dest, paths } => {
+            let repo = Repo::open(&repo_path(&cli)?)?;
+            let only = (!paths.is_empty()).then_some(paths.as_slice());
+            let r = ops::restore_selected(&repo, snapshot, dest, only, &prog)?;
             println!("{}", tr!("cli.restored", files = r.files, size = human(r.bytes), dest = dest.display()));
             for e in &r.errors {
                 eprintln!("{}", tr!("cli.error_line", m = e));

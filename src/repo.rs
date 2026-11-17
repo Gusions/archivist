@@ -847,4 +847,58 @@ mod tests {
         let plain = Repo::init_with(Arc::new(MemBackend::default())).unwrap();
         assert!(plain.decode(&[2, 1, 2, 3], "id").is_err());
     }
+
+    #[test]
+    fn selective_restore_brings_back_only_what_was_asked() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        let repo = Repo::init(&d.path().join("r")).unwrap();
+        let prog = Progress::default();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+
+        let out = d.path().join("one");
+        let rep = ops::restore_selected(&repo, "latest", &out, Some(&["Notes/b.md".to_string()]), &prog).unwrap();
+        assert_eq!((rep.files, rep.errors.len()), (1, 0));
+        assert_eq!(tree(&out), vec![("Notes/b.md".to_string(), b"hello".to_vec())]);
+
+        let out = d.path().join("folder");
+        ops::restore_selected(&repo, "latest", &out, Some(&["Notes".to_string()]), &prog).unwrap();
+        let names: Vec<_> = tree(&out).into_iter().map(|(p, _)| p).collect();
+        assert_eq!(names, vec!["Notes/a.md", "Notes/b.md"]);
+        assert!(out.join("Notes/empty").is_dir(), "empty folders inside the selection come back");
+        assert!(!out.join("img.png").exists());
+
+        // nothing matches: clear error and no destination created
+        let none = d.path().join("none");
+        assert!(ops::restore_selected(&repo, "latest", &none, Some(&["missing.md".to_string()]), &prog).is_err());
+        assert!(!none.exists());
+        // a non-empty destination is still refused
+        assert!(ops::restore_selected(&repo, "latest", &out, Some(&["Notes".to_string()]), &prog).is_err());
+    }
+
+    #[test]
+    fn diff_between_real_snapshots() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        let repo = Repo::init(&d.path().join("r")).unwrap();
+        let prog = Progress::default();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        fs::write(vault.join("Notes/b.md"), "hello world").unwrap();
+        fs::write(vault.join("Notes/new.md"), "n").unwrap();
+        fs::remove_file(vault.join("img.png")).unwrap();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        let metas = repo.list_meta().unwrap();
+        let (a, b) = (repo.load_snapshot(&metas[0].id).unwrap(), repo.load_snapshot(&metas[1].id).unwrap());
+        let got: Vec<_> = ops::diff_snapshots(&a, &b).into_iter().map(|c| (c.path, c.kind)).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Notes/b.md".to_string(), "modified"),
+                ("Notes/new.md".to_string(), "added"),
+                ("img.png".to_string(), "removed")
+            ]
+        );
+    }
 }
