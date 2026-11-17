@@ -210,6 +210,17 @@ pub fn set_password(p: Option<String>) {
     *PASSWORD.write().unwrap() = p;
 }
 
+/// Password for the archive in `repo`: as `password()`, then the system keychain. A password found
+/// in the keychain is kept for the session so the keychain is not queried again on every poll.
+pub fn password_for(repo: &std::path::Path) -> Option<String> {
+    if let Some(p) = password() {
+        return Some(p);
+    }
+    let p = crate::keychain::load(&crate::keychain::account(repo))?;
+    set_password(Some(p.clone()));
+    Some(p)
+}
+
 /// Passphrase in order of precedence: set explicitly, `ARCHIVIST_PASSWORD`,
 /// first line of the file named by `ARCHIVIST_PASSWORD_FILE`.
 pub fn password() -> Option<String> {

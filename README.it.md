@@ -71,22 +71,10 @@ la CLI le usa come default.
 
 ## Backup in background
 
-Il backup automatico della UI funziona solo ad app aperta. Per l'esecuzione in background usa lo scheduler:
-
-**macOS** — `~/Library/LaunchAgents/it.archivist.backup.plist`, poi `launchctl load ~/Library/LaunchAgents/it.archivist.backup.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>it.archivist.backup</string>
-  <key>ProgramArguments</key><array><string>/usr/local/bin/archivist</string><string>backup</string></array>
-  <key>StartInterval</key><integer>3600</integer>
-  <key>RunAtLoad</key><true/>
-</dict></plist>
-```
-
-**Windows** — `schtasks /Create /SC HOURLY /TN "Archivist" /TR "C:\\percorso\\archivist.exe backup"`
+- **macOS**: `archivist schedule install --every 60` (oppure Impostazioni, Backup, "Backup in background") installa un agente launchd dell'utente che esegue `archivist backup` ogni N minuti, anche con l'app chiusa. Log: `~/Library/Logs/Archivist/backup.log`. `archivist schedule status` mostra se è attivo e l'ultima riga del log; `archivist schedule remove` lo disattiva. L'agente punta al programma che l'ha installato: se sposti o elimini l'app, reinstallalo. La prima volta macOS può chiedere di consentire l'accesso alla cartella del vault (Documenti, iCloud Drive…); se non lo chiede, il log mostrerà un errore di permessi.
+- **Archivi cifrati**: serve la password nel Portachiavi: `archivist keychain save` oppure spunta "Ricorda nel Portachiavi" quando crei o sblocchi l'archivio. `archivist keychain forget` la rimuove.
+- **Windows**: `schtasks /Create /SC HOURLY /TN "Archivist" /TR "C:\\percorso\\archivist.exe backup"`. **Linux**: un timer systemd utente o cron che esegue `archivist backup`. Non ancora automatizzati; per gli archivi cifrati usa `ARCHIVIST_PASSWORD_FILE`.
+- Il backup automatico dentro l'app (Impostazioni, Backup) funziona solo ad app aperta.
 
 ## Come funziona (e garanzie)
 

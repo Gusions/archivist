@@ -143,7 +143,7 @@ impl Repo {
 
     /// Open a local repository. Encrypted ones use the process passphrase (`crypto::password`).
     pub fn open(root: &Path) -> Result<Repo> {
-        Self::open_with(Arc::new(LocalBackend::new(root)), &root.display().to_string(), crypto::password().as_deref())
+        Self::open_with(Arc::new(LocalBackend::new(root)), &root.display().to_string(), crypto::password_for(root).as_deref())
     }
 
     /// Create a plain (unencrypted) repository on any backend; no-op if one already exists.

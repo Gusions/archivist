@@ -88,6 +88,7 @@ dialog{border:0;border-radius:14px;background:var(--bg);color:var(--ink);padding
 dialog::backdrop{background:rgba(0,0,0,.28)}
 .dlg{padding:22px 24px}
 #brBody{min-height:320px}
+.chk{display:flex;gap:8px;align-items:flex-start;margin:12px 2px 0;font-size:13px;color:var(--ink)}.chk input{margin-top:2px}.chk .sub{margin:0}
 .dlg h3{margin:0 0 4px;font-size:16px}.dlg .sub{margin:0 0 6px;color:var(--ink2)}
 .dlg h2{margin-left:4px}
 .fld{padding:10px 16px;border-top:1px solid var(--sep)}
@@ -224,6 +225,7 @@ code{font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:v
 <dialog id="unlockDlg"><form method="dialog" class="dlg" id="unlockForm">
   <h3 data-i18n="enc.unlock_title"></h3><p class="sub" data-i18n="enc.unlock_sub"></p>
   <div class="grp"><div class="fld"><label for="unPass" data-i18n="enc.password"></label><input type="password" id="unPass" autocomplete="current-password"></div></div>
+  <label class="chk" id="unRememberWrap" hidden><input type="checkbox" id="unRemember" checked><span><span data-i18n="enc.remember"></span><span class="sub" data-i18n="enc.remember_sub"></span></span></label>
   <p class="sub" style="color:var(--red);min-height:1.4em" id="unErr" role="alert"></p>
   <div class="foot"><button class="btn" type="submit" id="unOk" data-i18n="enc.unlock"></button></div>
 </form></dialog>
@@ -232,6 +234,7 @@ code{font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:v
   <h3 id="encTitle"></h3><p class="sub" id="encSub"></p>
   <div class="grp"><div class="fld"><label for="encA" data-i18n="enc.password"></label><input type="password" id="encA" autocomplete="new-password"></div>
   <div class="fld"><label for="encB" data-i18n="enc.repeat"></label><input type="password" id="encB" autocomplete="new-password"></div></div>
+  <label class="chk" id="encRememberWrap" hidden><input type="checkbox" id="encRemember"><span><span data-i18n="enc.remember"></span><span class="sub" data-i18n="enc.remember_sub"></span></span></label>
   <p class="sub" data-i18n="enc.warn"></p>
   <p class="sub" style="color:var(--red);min-height:1.4em" id="encErr" role="alert"></p>
   <div class="foot"><button class="btn sec" type="button" id="encCancel" data-i18n="btn.cancel"></button><button class="btn" type="submit" id="encOk"></button></div>
@@ -330,7 +333,7 @@ function homeHTML(){
     <div class="row"><span>${esc(t("home.ratio"))}</span><span class="v">${esc(ratio)}</span></div></div>
   <h2>${esc(t("home.recent"))}</h2><div class="grp">${snaps.length?snaps.slice(0,3).map(m=>snapRow(m,false)).join("")+(snaps.length>3?`<div class="row"><a data-go="snaps">${esc(t("btn.show_all",{n:snaps.length}))}</a><span></span></div>`:""):`<div class="empty">${esc(t("home.empty"))}</div>`}</div>
   <h2>${esc(t("home.schedule"))}</h2><div class="grp">
-    <div class="row"><span>${esc(t("home.auto"))}<span class="sub">${esc(t("home.auto_sub"))}</span></span><button class="sw" role="switch" aria-checked="${on}" aria-label="${esc(t("home.auto"))}" id="swAuto"></button></div>
+    <div class="row"><span>${esc(t("home.auto"))}<span class="sub">${esc(S.schedule&&S.schedule.installed?t("home.auto_bg"):t("home.auto_sub"))}</span></span><button class="sw" role="switch" aria-checked="${on}" aria-label="${esc(t("home.auto"))}" id="swAuto"></button></div>
     <div class="row"><label for="selFreq">${esc(t("home.frequency"))}</label><select id="selFreq" ${on?"":"disabled"}>${opts}</select></div>
     <div class="row"><span>${esc(t("home.destination"))}<span class="sub">${esc(s.repo?s.repo+(S.repo_kind==="encrypted"?" · "+t("home.encrypted"):""):t("home.destination_unset"))}</span></span><button class="btn sec" id="editDest">${esc(t("btn.change"))}</button></div></div>`;
 }
@@ -371,18 +374,19 @@ function showResult(job){
 }
 function syncLock(){
   const d=$("unlockDlg");
-  if(S.locked&&!d.open){$("unPass").value="";$("unErr").textContent="";d.showModal();$("unPass").focus()}
+  if(S.locked&&!d.open){$("unPass").value="";$("unErr").textContent="";$("unRememberWrap").hidden=!(S.keychain&&S.keychain.supported);d.showModal();$("unPass").focus()}
   else if(!S.locked&&d.open)d.close();
 }
 $("unlockDlg").addEventListener("cancel",e=>e.preventDefault());
 $("unlockForm").onsubmit=async e=>{e.preventDefault();$("unErr").textContent="";const b=$("unOk");b.disabled=true;
-  try{await api("unlock","POST",{password:$("unPass").value});$("unPass").value="";await refresh()}
+  try{await api("unlock","POST",{password:$("unPass").value,remember:!$("unRememberWrap").hidden&&$("unRemember").checked});$("unPass").value="";await refresh()}
   catch(x){$("unErr").textContent=x.message;$("unPass").select()}
   b.disabled=false};
-function askNewPassword({title,sub,ok}){return new Promise(res=>{
+function askNewPassword({title,sub,ok,remember}){return new Promise(res=>{
   $("encTitle").textContent=title;$("encSub").textContent=sub;$("encOk").textContent=ok;$("encA").value="";$("encB").value="";$("encErr").textContent="";
+  const kc=S.keychain&&S.keychain.supported;$("encRememberWrap").hidden=!kc;$("encRemember").checked=!!remember;
   const d=$("encDlg");let done=false;const fin=v=>{if(done)return;done=true;d.close();res(v)};
-  $("encForm").onsubmit=e=>{e.preventDefault();if($("encA").value!==$("encB").value){$("encErr").textContent=t("enc.mismatch");return}fin($("encA").value)};
+  $("encForm").onsubmit=e=>{e.preventDefault();if($("encA").value!==$("encB").value){$("encErr").textContent=t("enc.mismatch");return}fin({pw:$("encA").value,remember:kc&&$("encRemember").checked})};
   $("encCancel").onclick=()=>fin(null);d.oncancel=()=>fin(null);d.showModal();$("encA").focus()})}
 async function refresh(){
   try{S=await api("state");await loadCatalog();syncLock();
@@ -481,18 +485,36 @@ const nearest=(l)=>LEVELS.reduce((a,b)=>Math.abs(b[0]-l)<Math.abs(a[0]-l)?b:a)[0
 const row=(l,sub,c)=>`<div class="srow"><span class="l">${esc(l)}${sub?`<span class="sub">${esc(sub)}</span>`:""}</span><span class="c">${c}</span></div>`;
 function seg(name,cur,items){return `<span class="seg" role="radiogroup" data-seg="${name}">${items.map(([v,l])=>`<button type="button" role="radio" aria-checked="${v===cur}" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span>`}
 function stepper(key,label,sub,v){return row(label,sub,`<span class="stp" data-k="${key}"><button type="button" data-d="-1" aria-label="${esc(t("set.stepper.dec"))}">−</button><output>${v}</output><button type="button" data-d="1" aria-label="${esc(t("set.stepper.inc"))}">+</button></span>`)}
+function bgRow(){
+  const sc=S.schedule;if(!sc||!sc.supported)return"";
+  let sub=t("set.bg_sub");
+  if(sc.stale)sub=t("set.bg_stale");else if(sc.installed&&sc.last_log)sub+="\n"+t("set.bg_last",{line:sc.last_log});
+  return `<div class="srow"><span class="l">${esc(t("set.bg"))}<span class="sub" style="white-space:pre-wrap;${sc.stale?"color:var(--red)":""}">${esc(sub)}</span></span><span class="c"><button class="sw" role="switch" aria-checked="${!!sc.installed}" aria-label="${esc(t("set.bg"))}" id="swBg"></button></span></div>`;
+}
+async function toggleBg(){
+  const on=!S.schedule.installed;
+  try{await api("schedule","POST",{enabled:on,minutes:S.settings.auto_minutes||60});setErr="";S=await api("state")}
+  catch(e){setErr=e.message}
+  renderSettings();
+}
+async function toggleRemember(){
+  try{await api("keychain","POST",{remember:!S.keychain.remembered});setErr="";S=await api("state")}
+  catch(e){setErr=e.message}
+  renderSettings();
+}
 function encGroup(){
   const k=S.repo_kind,s=S.settings;let r;
-  if(k==="encrypted")r=row(t("set.enc.on"),t("set.enc.on_sub"),`<button type="button" class="btn sec" id="encChange">${esc(t("enc.change"))}</button>`);
+  if(k==="encrypted"){r=row(t("set.enc.on"),t("set.enc.on_sub"),`<button type="button" class="btn sec" id="encChange">${esc(t("enc.change"))}</button>`);
+    if(S.keychain&&S.keychain.supported)r+=row(t("set.remember"),t("set.remember_sub"),`<button class="sw" role="switch" aria-checked="${!!S.keychain.remembered}" aria-label="${esc(t("set.remember"))}" id="swRemember"></button>`)}
   else if(k==="plain")r=row(t("set.enc.plain"),t("set.enc.plain_sub"),"");
   else r=row(t("set.enc.none"),s.repo?t("set.enc.none_sub"):t("set.enc.setup_first"),`<button type="button" class="btn sec" id="encCreate" ${s.repo?"":"disabled"}>${esc(t("btn.create_encrypted"))}</button>`);
   return `<h2>${esc(t("set.g.encryption"))}</h2><div class="grp">${r}</div>`;
 }
 async function encAction(kind){
   const create=kind==="create";
-  const pw=await askNewPassword(create?{title:t("enc.create_title"),sub:t("enc.create_sub",{path:S.settings.repo}),ok:t("enc.create")}:{title:t("enc.change_title"),sub:t("enc.change_sub"),ok:t("enc.change")});
-  if(!pw)return;
-  try{await api(create?"encrypt/create":"encrypt/password","POST",{password:pw});setErr="";S=await api("state");note(t(create?"enc.created":"enc.changed"),"ok")}
+  const r=await askNewPassword(create?{title:t("enc.create_title"),sub:t("enc.create_sub",{path:S.settings.repo}),ok:t("enc.create"),remember:true}:{title:t("enc.change_title"),sub:t("enc.change_sub"),ok:t("enc.change"),remember:S.keychain&&S.keychain.remembered});
+  if(!r)return;
+  try{await api(create?"encrypt/create":"encrypt/password","POST",{password:r.pw,remember:r.remember});setErr="";S=await api("state");note(t(create?"enc.created":"enc.changed"),"ok")}
   catch(e){setErr=e.message}
   renderSettings();
 }
@@ -512,7 +534,8 @@ function paneHTML(){
     const pats=s.exclude.map((p,i)=>`<div class="pat"><code>${esc(p)}</code><button type="button" data-rm="${i}" aria-label="${esc(t("set.excl_remove",{p}))}" title="${esc(t("set.excl_remove",{p}))}">×</button></div>`).join("");
     return `<h2>${esc(t("set.g.engine"))}</h2><div class="grp">
       ${row(t("set.compression"),t("set.compression_sub"),`<select id="fLevel">${LEVELS.map(([v,k])=>`<option value="${v}" ${nearest(s.level)===v?"selected":""}>${esc(t(k))}</option>`).join("")}</select>`)}
-      ${row(t("set.auto"),t("set.auto_sub"),`<select id="fAuto"><option value="0" ${s.auto_minutes==0?"selected":""}>${esc(t("freq.never"))}</option>${FREQ.map(v=>`<option value="${v}" ${s.auto_minutes==v?"selected":""}>${esc(t("freq."+v))}</option>`).join("")}</select>`)}</div>
+      ${row(t("set.auto"),t("set.auto_sub"),`<select id="fAuto"><option value="0" ${s.auto_minutes==0?"selected":""}>${esc(t("freq.never"))}</option>${FREQ.map(v=>`<option value="${v}" ${s.auto_minutes==v?"selected":""}>${esc(t("freq."+v))}</option>`).join("")}</select>`)}
+      ${bgRow()}</div>
     <h2>${esc(t("set.g.exclusions"))}</h2><div class="grp">${pats}<div class="addrow"><input type="text" id="fAdd" placeholder="${esc(t("set.excl_ph"))}" autocomplete="off" spellcheck="false"><button type="button" class="btn sec" id="addPat">${esc(t("btn.add"))}</button></div></div>
     <div class="hint">${esc(t("set.excl_sub"))}</div>`;
   }
@@ -547,6 +570,8 @@ $("sPane").addEventListener("click",e=>{
   const rm=e.target.closest("[data-rm]");if(rm){commit({exclude:S.settings.exclude.filter((_,i)=>i!==+rm.dataset.rm)});return}
   if(e.target.id==="addPat")addPattern();
   if(e.target.id==="encCreate")encAction("create");
+  if(e.target.id==="swBg")toggleBg();
+  if(e.target.id==="swRemember")toggleRemember();
   if(e.target.id==="encChange")encAction("change");
 });
 function addPattern(){const i=$("fAdd"),v=i.value.trim();if(!v||S.settings.exclude.includes(v))return;commit({exclude:[...S.settings.exclude,v]}).then(()=>$("fAdd")&&$("fAdd").focus())}
@@ -555,7 +580,8 @@ $("sPane").addEventListener("change",e=>{const i=e.target.id;
   if(i==="fVault")commit({vault:e.target.value.trim()},false);
   else if(i==="fRepo")commit({repo:e.target.value.trim()});
   else if(i==="fLevel")commit({level:+e.target.value},false);
-  else if(i==="fAuto")commit({auto_minutes:+e.target.value},false);
+  else if(i==="fAuto"){const v=+e.target.value;commit({auto_minutes:v},false).then(async()=>{
+      if(S.schedule&&S.schedule.installed&&v>0){try{await api("schedule","POST",{enabled:true,minutes:v});S=await api("state")}catch(x){setErr=x.message;$("setErr").textContent=setErr}}})}
   else if(i==="fLang")commit({lang:e.target.value});
 });
 refresh();
