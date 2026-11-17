@@ -32,6 +32,9 @@ a{color:var(--accent);text-decoration:none;cursor:pointer}
 a:hover{text-decoration:underline}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
 .app{display:flex;height:100vh}
+/* Finestra nativa macOS: titolo integrato, i semafori stanno sopra la sidebar. */
+html.native-mac .side{padding-top:46px}
+html.native .bar,html.native .side{-webkit-user-select:none;user-select:none}
 .side{flex:0 0 228px;background:var(--side);border-right:1px solid var(--sep);padding:18px 12px;display:flex;flex-direction:column;gap:2px;overflow:auto}
 .brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;padding:0 8px 16px;letter-spacing:-.01em}
 .nav{display:flex;align-items:center;gap:9px;height:34px;padding:0 10px;border:0;border-radius:8px;background:transparent;text-align:left;width:100%}
@@ -264,7 +267,13 @@ function applyTheme(){
   const b=$("themeBtn"),name=t("set.theme."+m);
   b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true">'+ICONS[m]+'</svg>';
   b.title=b.ariaLabel=t("theme.toggle",{mode:name});
+  if(window.ipc)window.ipc.postMessage("theme:"+m);
 }
+document.addEventListener("mousedown",e=>{
+  if(e.button!==0||!window.ipc||!e.target.closest(".bar,.side"))return;
+  if(e.target.closest("button,a,input,select,textarea,.nav"))return;
+  window.ipc.postMessage(e.detail>1?"zoom":"drag");
+});
 
 /* ---- banner ---- */
 function note(msg,kind){const n=$("note");if(!msg){n.hidden=true;return}n.hidden=false;n.className="banner "+(kind||"");n.innerHTML='<a class="x" id="xnote" role="button">'+esc(t("btn.dismiss"))+'</a>'+esc(msg);$("xnote").onclick=()=>note("")}
