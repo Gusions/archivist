@@ -1,22 +1,22 @@
+<div align="center">
+
+<img src="docs/logo.png" width="120" alt="Logo Archivist">
+
 # Archivist
 
-<p align="center"><img src="docs/logo.png" width="120" alt="Logo Archivist"></p>
-
-*Fai il backup del tuo vault Obsidian. Ripristinalo byte per byte.*
-*Incrementale, deduplicato, lossless. Un solo piccolo eseguibile Rust.*
+*Fai il backup del tuo vault Obsidian. Ripristinalo byte per byte.*  
+*Incrementale, deduplicato, lossless. Un solo piccolo eseguibile Rust.*  
+**English** · [Italiano](README.it.md)
 
 [English](README.md) · **Italiano**
 
-**English** · [Italiano](README.it.md)
-
 Snapshot, non copie · lossless per costruzione · verifica integrità inclusa · niente cloud, niente account · traducibile
+
+</div>
 
 **Un vault cresce per anni. Archivist conserva ogni backup come snapshot completo, scrive solo ciò che è cambiato e non altera mai i tuoi file.**
 
-<p align="center">
-  <img src="docs/screenshots/overview-light.png" width="49%" alt="Panoramica, tema chiaro">
-  <img src="docs/screenshots/overview-dark.png" width="49%" alt="Panoramica, tema scuro">
-</p>
+<p align="center"><img src="docs/screenshots/overview-light.png" width="780" alt="Archivist, panoramica"></p>
 
 ## Cosa fa
 
@@ -98,7 +98,6 @@ Il backup automatico della UI funziona solo ad app aperta. Per l'esecuzione in b
 - Link simbolici ignorati; permessi Unix e attributi estesi non conservati (le date di modifica sì).
 - Non usare due operazioni di scrittura sullo stesso archivio da macchine diverse contemporaneamente (c'è un lock locale ma non su rete).
 - Vault con `.git` (plugin Obsidian Git): viene incluso come ogni altra cartella; aggiungi `.git` alle esclusioni se non lo vuoi.
-
 
 ## Lingue e tema
 

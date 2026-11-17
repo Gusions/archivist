@@ -1,20 +1,24 @@
+<div align="center">
+
+<img src="docs/logo.png" width="120" alt="Archivist logo">
+
 # Archivist
 
-<p align="center"><img src="docs/logo.png" width="120" alt="Archivist logo"></p>
-
-*Back up your Obsidian vault. Restore it byte for byte.*
-*Incremental, deduplicated, lossless. One small Rust binary.*
+*Back up your Obsidian vault. Restore it byte for byte.*  
+*Incremental, deduplicated, lossless. One small Rust binary.*  
 
 **English** · [Italiano](README.it.md)
 
 [![Version](https://img.shields.io/badge/version-0.1.0-0A66E8)](Cargo.toml)
 [![Languages](https://img.shields.io/badge/languages-2-0A66E8)](#adding-a-language)
-[![Platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-0A66E8)](#install)
+[![Platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-0A66E8)](#platforms)
 [![Build](https://github.com/Gusions/archivist/actions/workflows/release.yml/badge.svg)](https://github.com/Gusions/archivist/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0A66E8)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Gusions/archivist?style=flat&color=0A66E8)](https://github.com/Gusions/archivist/stargazers)
 
 Snapshots, not copies · lossless by design · integrity checks built in · no cloud, no account · translatable
+
+</div>
 
 **A vault grows for years. Archivist keeps every backup as a full snapshot, writes only what changed, and never alters your files.**
 
@@ -25,10 +29,7 @@ Snapshots, not copies · lossless by design · integrity checks built in · no c
 | Edited note (a few lines) | Writes only the changed blocks, a few KB | None |
 | Moved or duplicated file | Zero extra space | None |
 
-<p align="center">
-  <img src="docs/screenshots/overview-light.png" width="49%" alt="Overview, light theme">
-  <img src="docs/screenshots/overview-dark.png" width="49%" alt="Overview, dark theme">
-</p>
+<p align="center"><img src="docs/screenshots/overview-light.png" width="780" alt="Archivist overview"></p>
 
 ## Quick start
 
@@ -64,11 +65,6 @@ No bundled browser: the binary is a few MB.
 - **Export** any snapshot as a portable `.tar.zst`.
 - **Native macOS-style UI** with light, dark and system themes.
 - **Translatable**: every string lives in `i18n/<code>.json` (English and Italian included).
-
-<p align="center">
-  <img src="docs/screenshots/snapshots-light.png" width="49%" alt="Snapshots">
-  <img src="docs/screenshots/settings-dark.png" width="49%" alt="Settings, dark theme">
-</p>
 
 ## How it works
 
