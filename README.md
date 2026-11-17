@@ -5,7 +5,7 @@
 # Archivist
 
 *Back up your Obsidian vault. Restore it byte for byte.*  
-*Incremental, deduplicated, lossless. One small Rust binary.*  
+*Incremental, deduplicated, lossless.*  
 
 **English** · [Italiano](README.it.md)
 
