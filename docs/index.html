@@ -5,223 +5,244 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Archivist</title>
 <meta name="description" content="Lossless, incremental, deduplicated backup and restore for Obsidian vaults.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-/* Plan: documentation-site layout (top bar + section sidebar + one reading column).
-   Cool neutrals leaning toward the app icon's blue; code blocks are the main visual device. */
+/* Plan: dark-first documentation site. Fixed left sidebar (no top bar), one narrow reading column,
+   stacked coloured wordmark as the hero, rounded code panels as the main device. */
 :root{
-  --bg:#FAFAFB;--panel:#FFFFFF;--ink:#16181D;--muted:#5F6672;--line:#E4E6EB;--accent:#0A66E8;--accent-soft:#E7F0FD;--code:#F2F4F7;--ok:#1B8A4B;
-  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  color-scheme:light;
+  --bg:#0F0F0F;--panel:#1A1A19;--panel2:#161615;--ink:#E4E3DD;--muted:#8E8D88;--line:#262624;--hover:#222221;
+  --olive:#A8B45C;--blue:#6C9BD2;--orange:#E08B5B;--grey:#9B9A96;--cream:#F1F0E7;--red:#E5766B;--green:#7FBFA3;
+  --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:dark;
 }
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#0E1013;--panel:#15181D;--ink:#ECEEF2;--muted:#9AA2AF;--line:#242830;--accent:#5B9CFF;--accent-soft:#16233A;--code:#1A1E25;--ok:#4CC27F;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#0E1013;--panel:#15181D;--ink:#ECEEF2;--muted:#9AA2AF;--line:#242830;--accent:#5B9CFF;--accent-soft:#16233A;--code:#1A1E25;--ok:#4CC27F;color-scheme:dark}
+@media(prefers-color-scheme:light){:root{
+  --bg:#FBFBF9;--panel:#F1F0EC;--panel2:#EAE9E4;--ink:#22221F;--muted:#74736E;--line:#E3E2DC;--hover:#ECEBE6;
+  --olive:#7E8A2C;--blue:#3F6FA8;--orange:#C2622E;--grey:#85847F;--cream:#1C1C1A;--red:#C4473C;--green:#2F8061;color-scheme:light}}
 *{box-sizing:border-box}
-html{scroll-behavior:smooth;scroll-padding-top:72px}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 var(--sans)}
-a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+html{scroll-behavior:smooth;scroll-padding-top:28px}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:5px}
 code,pre{font-family:var(--mono)}
-.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
-.top .in{max-width:1180px;margin:0 auto;padding:0 20px;height:56px;display:flex;align-items:center;gap:22px}
-.brand{display:flex;align-items:center;gap:9px;font-weight:600;color:var(--ink);letter-spacing:-.01em}
-.brand:hover{text-decoration:none}
-.top nav{display:flex;gap:20px;font-size:14.5px}
-.top nav a{color:var(--muted)}.top nav a:hover{color:var(--ink);text-decoration:none}
-.sp{flex:1}
-.search{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px 0 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--muted);font:inherit;font-size:14px;min-width:210px;cursor:pointer}
-.search kbd{margin-left:auto;font:12px var(--mono);border:1px solid var(--line);border-radius:5px;padding:0 6px;background:var(--code)}
-.gh{font-size:14.5px;color:var(--muted)}
-.wrap{max-width:1180px;margin:0 auto;padding:0 20px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:56px}
-.side{position:sticky;top:56px;align-self:start;padding:36px 0;font-size:14.5px;display:flex;flex-direction:column;gap:2px;max-height:calc(100vh - 56px);overflow:auto}
-.side b{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0 0 8px}
-.side a{color:var(--muted);padding:3px 0 3px 12px;border-left:2px solid var(--line)}
-.side a:hover{color:var(--ink);text-decoration:none}
-.side a.on{color:var(--accent);border-left-color:var(--accent)}
-main{padding:56px 0 80px;min-width:0;max-width:760px}
-h1{font-size:clamp(2.1rem,5vw,3.1rem);line-height:1.1;letter-spacing:-.03em;margin:0 0 16px;font-weight:600;text-wrap:balance}
-h1 em{font-style:normal;color:var(--accent)}
-h2{font-size:1.65rem;letter-spacing:-.02em;margin:64px 0 12px;font-weight:600;text-wrap:balance}
-h3{font-size:1.05rem;margin:28px 0 6px;font-weight:600}
-p{margin:0 0 14px;max-width:66ch}
-.lead{font-size:1.15rem;color:var(--muted);max-width:56ch}
-.badges{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 0}
-.badge{font:13px var(--mono);padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:var(--panel);color:var(--muted)}
-.cta{display:flex;gap:10px;flex-wrap:wrap;margin:26px 0 0}
-.btn{display:inline-flex;align-items:center;height:40px;padding:0 18px;border-radius:9px;font-weight:500;font-size:15px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
-.btn:hover{text-decoration:none;border-color:var(--accent)}
-.btn.p{background:var(--accent);border-color:var(--accent);color:#fff}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .btn.p{color:#0A1220}}
-:root[data-theme="dark"] .btn.p{color:#0A1220}
-.shot{margin:40px 0 0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}
-.shot img{display:block;width:100%;height:auto}
-.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}
-.blk{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden;min-width:0}
-.blk .cap{display:flex;align-items:center;justify-content:space-between;padding:7px 12px;border-bottom:1px solid var(--line);font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600}
-.blk pre{flex:1;margin:0;padding:12px;overflow-x:auto;font-size:13px;line-height:1.6;background:var(--code)}
-.blk .ok{color:var(--ok)}
-.copy{font:12px var(--sans);border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--muted);padding:2px 8px;cursor:pointer;text-transform:none;letter-spacing:0}
-.copy:hover{color:var(--ink)}
-.tabs{display:flex;gap:4px;margin:18px 0 0}
-.tab{border:1px solid var(--line);border-bottom:0;background:transparent;color:var(--muted);font:500 14px var(--sans);padding:7px 14px;border-radius:9px 9px 0 0;cursor:pointer}
-.tab[aria-selected=true]{background:var(--panel);color:var(--ink)}
-.tabbed .blk{border-radius:0 10px 10px 10px}
-.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}
-.card{display:block;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink)}
-.card:hover{text-decoration:none;border-color:var(--accent)}
-.card b{display:block;margin-bottom:4px}
-.card span{color:var(--muted);font-size:14.5px;line-height:1.5;display:block}
-table{border-collapse:collapse;width:100%;font-size:14.5px;margin:16px 0}
-th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600}
-.scrollx{overflow-x:auto}
-details{border-bottom:1px solid var(--line);padding:12px 0}
-summary{cursor:pointer;font-weight:500}
+.side{position:fixed;top:0;left:0;bottom:0;width:236px;padding:24px 18px;overflow:auto;font-size:13.5px}
+.brand{display:block;font-size:19px;font-weight:600;letter-spacing:-.02em;text-decoration:none;margin:0 0 14px 2px}
+.side button.srch,.side a.pl{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;color:var(--ink);font:inherit;padding:5px 2px;cursor:pointer;text-decoration:none;text-align:left}
+.side svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:var(--muted)}
+.side kbd{font:11.5px var(--sans);color:var(--muted);margin-left:-2px}
+.nav{margin-top:26px;display:flex;flex-direction:column}
+.nav>a{color:var(--muted);text-decoration:none;padding:4px 2px}
+.nav>a:hover,.nav .sub a:hover{color:var(--ink)}
+.nav>a.cur{color:var(--ink)}
+.nav .sub{display:flex;flex-direction:column;margin:2px 0 6px 2px;border-left:1px solid var(--line)}
+.nav .sub a{color:var(--muted);text-decoration:none;padding:4px 0 4px 10px;margin-left:-1px;border-left:1px solid transparent}
+.nav .sub a.on{color:var(--ink);border-left-color:var(--ink)}
+main{margin-left:236px;padding:64px 28px 120px}
+.col{max-width:530px;margin:0 auto}
+.hero{display:flex;flex-direction:column;align-items:center;justify-content:center;height:360px;margin:0 0 36px;font-weight:700;letter-spacing:-.045em;line-height:.8;user-select:none}
+.hero span{display:block;white-space:nowrap}
+.w1{color:var(--olive);font-size:60px;transform:translateX(-22px) rotate(-82deg);height:40px;margin-bottom:6px;transform-origin:center}
+.w2{color:var(--blue);font-size:76px;transform:rotate(-2.5deg) translateX(-8px)}
+.w3{color:var(--orange);font-size:84px;transform:rotate(-3deg) translateX(6px);margin-top:2px}
+.w4{color:var(--grey);font-size:62px;transform:rotate(-5deg) translateX(18px);margin-top:4px}
+.w5{color:var(--cream);font-size:64px;transform:translateX(4px);margin-top:2px;letter-spacing:-.05em}
+.lead{font-size:20px;line-height:1.5;margin:0 0 56px}
+.lead a{text-underline-offset:3px}
+.lead .o{color:var(--olive)}.lead .b{color:var(--blue)}.lead .r{color:var(--orange)}
+h2{font-size:18px;font-weight:500;margin:64px 0 10px;letter-spacing:-.01em;color:var(--ink)}
+h2.top{margin-top:0}
+p{margin:0 0 14px;color:var(--ink)}
+p.m,.m{color:var(--muted)}
+.panel{background:var(--panel);border-radius:14px;margin:14px 0 22px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 0;font-size:13px;color:var(--muted)}
+.ph .act{display:flex;gap:14px;align-items:center}
+.ph button{background:none;border:0;color:var(--muted);font:inherit;cursor:pointer;display:flex;gap:6px;align-items:center;padding:0}
+.ph button:hover{color:var(--ink)}
+.ph svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.panel pre{margin:0;padding:12px 16px 16px;font-size:13.5px;line-height:1.65;overflow-x:auto;color:var(--ink)}
+.panel .div{border-top:1px solid var(--line)}
+.panel.one pre{padding:16px}
+.panel.one .ph{position:absolute;right:0;top:0}
+.panel.one{position:relative}
+.panel.one .ph{padding:12px 14px}
+.c-r{color:var(--red)}.c-g{color:var(--green)}.c-b{color:var(--blue)}.c-m{color:var(--muted)}.c-o{color:var(--orange)}
+.pills{display:inline-flex;background:var(--panel);border-radius:99px;padding:3px;gap:2px;margin:8px 0 10px}
+.pill{border:0;background:none;color:var(--muted);font:13px var(--sans);padding:3px 11px;border-radius:99px;cursor:pointer}
+.pill[aria-selected=true]{background:var(--hover);color:var(--ink)}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+.card{background:var(--panel);border-radius:12px;padding:16px;text-decoration:none;display:block;min-height:112px}
+.card:hover{background:var(--hover)}
+.card b{display:block;font-weight:500;margin-bottom:4px}
+.card span{color:var(--muted);font-size:14.5px;line-height:1.45;display:block}
+.shot{background:var(--panel);border-radius:14px;padding:8px;margin:14px 0 14px}
+.shot img{display:block;width:100%;height:auto;border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:12px 0 20px}
+td,th{text-align:left;padding:8px 0;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:400;font-size:13px}
+td:first-child{padding-right:16px;white-space:nowrap}
+td code{color:var(--blue)}
+ul{padding-left:18px;margin:0 0 14px}li{margin:4px 0}
+details{border-bottom:1px solid var(--line);padding:11px 0}
+summary{cursor:pointer}
 details p{margin:8px 0 0;color:var(--muted)}
-footer{border-top:1px solid var(--line);padding:28px 20px;color:var(--muted);font-size:14px}
-footer .in{max-width:1180px;margin:0 auto;display:flex;gap:20px;flex-wrap:wrap;align-items:center}
-dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);padding:0;width:min(520px,calc(100vw - 32px));top:12vh;margin:0 auto}
-dialog::backdrop{background:rgba(0,0,0,.35)}
+footer{margin-top:72px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13.5px;display:flex;gap:18px;flex-wrap:wrap}
+footer a{text-decoration:none}footer a:hover{color:var(--ink)}
+dialog{border:0;border-radius:14px;background:var(--panel);color:var(--ink);padding:0;width:min(500px,calc(100vw - 32px));top:14vh;margin:0 auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
 .pal input{width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);font:16px var(--sans);padding:14px 16px;outline:none}
 .pal ul{list-style:none;margin:0;padding:6px;max-height:300px;overflow:auto}
-.pal li a{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:8px;color:var(--ink)}
-.pal li a:hover,.pal li a.sel{background:var(--accent-soft);text-decoration:none}
+.pal li a{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:8px;text-decoration:none}
+.pal li a:hover,.pal li a.sel{background:var(--hover)}
 .pal li small{color:var(--muted)}
-@media(max-width:900px){.wrap{grid-template-columns:1fr;gap:0}.side{display:none}.top nav{display:none}.search{min-width:0;flex:1}.pair,.cards{grid-template-columns:1fr}}
+.mtop{display:none}
+@media(max-width:860px){.side{display:none}main{margin-left:0;padding:20px 18px 80px}.mtop{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.mtop b{font-size:18px}.mtop button{background:var(--panel);border:0;color:var(--ink);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}.cards{grid-template-columns:1fr}.hero{height:320px;transform:scale(.88)}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
 <body>
-<header class="top"><div class="in">
-  <a class="brand" href="#top"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#0A66E8"/><path d="M12 4.6l6.2 3.6v7.6L12 19.4l-6.2-3.6V8.2z" fill="#CFE0FF"/><path d="M12 4.6l6.2 3.6L12 12 5.8 8.2z" fill="#fff"/><path d="M12 12v7.4l6.2-3.6V8.2z" fill="#7FB0FF"/></svg>Archivist</a>
-  <nav aria-label="Primary"><a href="#quick-start">Quick start</a><a href="#how-it-works">How it works</a><a href="#cli">CLI</a><a href="#app">App</a><a href="#faq">FAQ</a></nav>
-  <span class="sp"></span>
-  <button class="search" id="openPal" type="button" aria-label="Search the page">Search <kbd>⌘K</kbd></button>
-  <a class="gh" href="https://github.com/Gusions/archivist">GitHub</a>
-</div></header>
-
-<div class="wrap" id="top">
-<aside class="side" aria-label="On this page"><b>On this page</b>
-  <a href="#quick-start">Quick start</a><a href="#how-it-works">How it works</a><a href="#cli">Archivist in your terminal</a><a href="#app">Archivist in your app</a><a href="#explore">Explore</a><a href="#guarantees">Guarantees</a><a href="#faq">FAQ</a>
+<aside class="side" aria-label="Navigation">
+  <a class="brand" href="#top">Archivist</a>
+  <button class="srch" id="openPal" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>Search <kbd>⌘K</kbd></button>
+  <a class="pl" href="https://github.com/Gusions/archivist/releases"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>Download</a>
+  <nav class="nav" id="nav">
+    <a class="cur" href="#top">Introduction</a>
+    <div class="sub">
+      <a href="#how-it-works">How it works</a><a href="#terminal">Archivist in your terminal</a><a href="#app">Archivist in your app</a><a href="#explore">Explore</a><a href="#in-use">Archivist in use</a>
+    </div>
+    <a href="#snapshots">Snapshots</a><a href="#restore">Restore</a><a href="#verify">Verify</a><a href="#retention">Retention</a><a href="#cli">CLI</a><a href="#limits">Limits</a>
+  </nav>
 </aside>
-<main>
-  <h1>Backups for vaults that keep <em>growing</em>.</h1>
-  <p class="lead">Archivist keeps every backup of your Obsidian vault as a full snapshot, writes only what changed, and restores it byte for byte.</p>
-  <div class="badges"><span class="badge">lossless</span><span class="badge">incremental</span><span class="badge">deduplicated</span><span class="badge">no cloud</span><span class="badge">MIT</span></div>
-  <div class="cta"><a class="btn p" href="#quick-start">Get started</a><a class="btn" href="https://github.com/Gusions/archivist/releases">Download</a></div>
-  <div class="shot"><picture><source srcset="screenshots/overview-dark.png" media="(prefers-color-scheme: dark)"><img src="screenshots/overview-light.png" alt="Archivist overview: status, recent snapshots and schedule" width="2000" height="1360"></picture></div>
 
-  <h2 id="quick-start">Quick start</h2>
-  <p>Build the native app, open it, choose your vault and a backup folder, then press <b>Back up now</b>. Obsidian vaults are detected for you.</p>
-  <div class="tabbed" role="tablist" aria-label="Install method">
-    <div class="tabs"><button class="tab" role="tab" aria-selected="true" data-t="cargo">Cargo</button><button class="tab" role="tab" aria-selected="false" data-t="mac">macOS app</button><button class="tab" role="tab" aria-selected="false" data-t="rel">Release</button></div>
-    <div class="blk" data-p="cargo"><div class="cap">Shell<button class="copy" type="button">Copy</button></div><pre><code>cargo build --release --features window
-./target/release/archivist</code></pre></div>
-    <div class="blk" data-p="mac" hidden><div class="cap">Shell<button class="copy" type="button">Copy</button></div><pre><code>./make-dmg.sh
-open dist/Archivist.dmg</code></pre></div>
-    <div class="blk" data-p="rel" hidden><div class="cap">Shell<button class="copy" type="button">Copy</button></div><pre><code># download the zip for your system from Releases, then
-xattr -d com.apple.quarantine ./archivist   # macOS, if Gatekeeper blocks it</code></pre></div>
+<main id="top"><div class="col">
+  <div class="mtop"><b>Archivist</b><button id="openPal2" type="button">Search</button></div>
+  <div class="hero" role="img" aria-label="for vaults kept in snapshots">
+    <span class="w1">for</span><span class="w2">vaults</span><span class="w3">kept</span><span class="w4">in</span><span class="w5">snapshots</span>
   </div>
-  <p style="margin-top:14px;color:var(--muted)">The window uses the system web view, so there is no bundled browser and the binary is a few MB.</p>
+  <p class="lead">Archivist is a simple backup tool that turns your Obsidian vault into lossless <a class="o" href="#snapshots">snapshots</a>, <a class="b" href="#restore">restores</a>, and <a class="r" href="#verify">checks</a>.</p>
 
-  <h2 id="how-it-works">How it works</h2>
-  <p>Files are split into content-defined chunks of about 64 KB. Each chunk is named by its BLAKE3 hash and stored once, compressed with zstd, inside pack files of about 64 MB. A snapshot is a list of files and the chunks they are made of, so an edited note costs a few chunks instead of a whole copy.</p>
-  <div class="scrollx"><table>
-    <thead><tr><th>In the vault</th><th>What Archivist does</th><th>Quality loss</th></tr></thead>
-    <tbody>
-    <tr><td>Notes, text, JSON, CSS</td><td>Block deduplication and zstd compression</td><td>None</td></tr>
-    <tr><td>PNG, JPEG, WebP, PDF, audio, video</td><td>Stored as they are, because they are already compressed</td><td>None</td></tr>
-    <tr><td>A note edited by a few lines</td><td>Writes only the changed chunks</td><td>None</td></tr>
-    <tr><td>A moved or duplicated file</td><td>No extra space</td><td>None</td></tr>
-    </tbody></table></div>
-  <div class="pair">
-    <div class="blk"><div class="cap">Command<button class="copy" type="button">Copy</button></div><pre><code>archivist backup
-archivist list</code></pre></div>
-    <div class="blk"><div class="cap">Output</div><pre><code>20261117-155423  166 files  526.8 KB  (+109.1 KB)
-20261117-155425  170 files  526.8 KB  (+1.4 KB)
-20261117-155426  175 files  526.9 KB  (+752.0 B)
-20261117-155427  179 files  526.9 KB  (+1.4 KB)</code></pre></div>
+  <h2 id="how-it-works" class="top">How it works</h2>
+  <p>Each backup is a snapshot of the whole vault. Only the data that changed is written.</p>
+  <div class="panel">
+    <div class="ph"><span>Command</span><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
+<pre><code><span class="c-r">archivist</span> backup
+<span class="c-r">archivist</span> list</code></pre>
+    <div class="ph div"><span>Output</span></div>
+<pre><code>20261117-155423  166 files  526.8 KB  <span class="c-m">(+109.1 KB)</span>
+20261117-155425  170 files  526.8 KB  <span class="c-m">(+1.4 KB)</span>
+20261117-155426  175 files  526.9 KB  <span class="c-m">(+752.0 B)</span>
+20261117-155427  179 files  526.9 KB  <span class="c-m">(+1.4 KB)</span></code></pre>
   </div>
-  <p>The first snapshot stores the vault. Each later one adds only what changed, shown after the plus sign. These figures come from a small demo vault of 179 notes.</p>
-
-  <h2 id="cli">Archivist in your terminal</h2>
-  <p>Everything the window does is available as a command, so you can script it or run it from a scheduler.</p>
-  <div class="pair">
-    <div class="blk"><div class="cap">Command<button class="copy" type="button">Copy</button></div><pre><code>archivist verify --full
-archivist stats</code></pre></div>
-    <div class="blk"><div class="cap">Output</div><pre><code>4 snapshots, 184 blocks checked (full hash)
-<span class="ok">Archive intact ✓</span>
-Snapshots: 4
+  <p>Notes are split into chunks, deduplicated and compressed. Images, PDFs, audio and video are already compressed, so they are stored as they are. Nothing is ever recompressed with loss.</p>
+  <div class="panel">
+    <div class="ph"><span>Command</span><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
+<pre><code><span class="c-r">archivist</span> stats</code></pre>
+    <div class="ph div"><span>Output</span></div>
+<pre><code>Snapshots: 4
 Latest vault (logical): 526.9 KB
 Archive on disk:        155.6 KB
-Vault/archive ratio: 3.39x</code></pre></div>
+Unique blocks: 184 in 4 packs
+Vault/archive ratio: 3.39x (with the whole history)</code></pre>
   </div>
-  <div class="scrollx"><table>
-    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
-    <tbody>
-    <tr><td><code>backup</code></td><td>Create a snapshot of the vault</td></tr>
-    <tr><td><code>list</code>, <code>stats</code></td><td>List snapshots, show sizes and ratio</td></tr>
-    <tr><td><code>verify [--full]</code></td><td>Check every block is present, or re-read and re-hash all of them</td></tr>
-    <tr><td><code>restore &lt;id|latest&gt; &lt;dir&gt;</code></td><td>Restore into an empty or new folder</td></tr>
-    <tr><td><code>export &lt;id|latest&gt; &lt;file&gt;</code></td><td>Write one snapshot as a portable <code>.tar.zst</code></td></tr>
-    <tr><td><code>prune</code></td><td>Apply the retention policy</td></tr>
-    <tr><td><code>ui</code></td><td>Open the interface in a browser instead of the window</td></tr>
-    </tbody></table></div>
+  <p class="m">Figures from a demo vault of 179 notes.</p>
+
+  <h2 id="terminal">Archivist in your terminal</h2>
+  <p>Back up, restore and verify from the command line. See the <a href="#cli" style="text-underline-offset:3px">CLI guide</a> for every command.</p>
+  <div class="panel one"><div class="ph"><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
+<pre><code><span class="c-r">archivist</span> --repo <span class="c-g">/Volumes/Disk/Backups</span> backup --vault <span class="c-g">~/Documents/Notes</span></code></pre></div>
 
   <h2 id="app">Archivist in your app</h2>
-  <p>The window follows macOS conventions: a sidebar, grouped rows, and settings that apply as you change them. The theme can follow the system or be set to light or dark, and the interface language can be changed in Settings. About and Settings live in the system menu.</p>
-  <h3>Retention</h3>
-  <p>Keep the latest N snapshots plus one per day, week and month for as long as you choose. The newest snapshot is never deleted.</p>
-  <h3>Languages</h3>
-  <p>Every string lives in <code>i18n/&lt;code&gt;.json</code>. English and Italian are included. To add one, copy <code>en.json</code>, translate the values and add a line to <code>CATALOGS</code> in <code>src/i18n.rs</code>.</p>
+  <p>Open the native window, choose your vault and a backup folder, press Back up now.</p>
+  <div role="tablist" aria-label="Install method" class="pills"><button class="pill" role="tab" aria-selected="true" data-t="cargo">cargo</button><button class="pill" role="tab" aria-selected="false" data-t="mac">macOS</button><button class="pill" role="tab" aria-selected="false" data-t="rel">release</button></div>
+  <div class="panel one tp" data-p="cargo"><div class="ph"><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
+<pre><code><span class="c-r">cargo</span> build --release --features window
+<span class="c-r">./target/release/archivist</span></code></pre></div>
+  <div class="panel one tp" data-p="mac" hidden><div class="ph"><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
+<pre><code><span class="c-r">./make-dmg.sh</span>
+<span class="c-r">open</span> dist/Archivist.dmg</code></pre></div>
+  <div class="panel one tp" data-p="rel" hidden><div class="ph"><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
+<pre><code><span class="c-m"># if Gatekeeper blocks the app</span>
+<span class="c-r">xattr</span> -d com.apple.quarantine ./archivist</code></pre></div>
 
   <h2 id="explore">Explore</h2>
   <div class="cards">
-    <a class="card" href="https://github.com/Gusions/archivist#command-line"><b>CLI reference</b><span>Every command and the settings the CLI reads by default.</span></a>
-    <a class="card" href="https://github.com/Gusions/archivist/tree/main/i18n"><b>Translate it</b><span>One JSON file per language, with placeholders.</span></a>
-    <a class="card" href="https://github.com/Gusions/archivist/releases"><b>Releases</b><span>Builds for macOS, Windows and Linux.</span></a>
+    <a class="card" href="#snapshots"><b>Snapshots</b><span>Complete pictures of the vault that store only what changed.</span></a>
+    <a class="card" href="#restore"><b>Restore</b><span>Bring a snapshot back exactly, dates included.</span></a>
+    <a class="card" href="#verify"><b>Verify</b><span>Check every block and keep a retention policy.</span></a>
   </div>
 
-  <h2 id="guarantees">Guarantees</h2>
-  <ul>
-    <li>A snapshot appears only after it is completely written. An interrupted backup leaves at most orphaned data, removed by the next <code>prune</code>.</li>
-    <li>Earlier backups are never modified.</li>
-    <li>The local interface listens on <code>127.0.0.1</code> only, needs a random token on every call and rejects non-local Host headers.</li>
-    <li>Restore refuses paths containing <code>..</code> and destinations that are not empty.</li>
-  </ul>
+  <h2 id="in-use">Archivist in use</h2>
+  <p>A native window with a sidebar, light and dark themes, and settings that apply as you change them. About and Settings sit in the system menu.</p>
+  <div class="shot"><picture><source srcset="screenshots/overview-light.png" media="(prefers-color-scheme: light)"><img src="screenshots/overview-dark.png" alt="Archivist overview: status, recent snapshots and schedule" width="2000" height="1360"></picture></div>
 
-  <h2 id="faq">FAQ</h2>
-  <details><summary>Does it replace Time Machine or cloud sync?</summary><p>No. It protects one thing, an Obsidian vault, with history and integrity checks. Keep your other backups.</p></details>
-  <details><summary>Will it shrink my images?</summary><p>No, on purpose. Photos and PDFs are already compressed, so they are stored unchanged. You save space on text, on repeated content and on history.</p></details>
-  <details><summary>Is the archive encrypted?</summary><p>Not yet. If it holds sensitive data, keep it on an encrypted volume such as FileVault, BitLocker or VeraCrypt. Encryption is the main planned feature.</p></details>
-  <details><summary>What is not preserved?</summary><p>Symlinks are skipped, and Unix permissions and extended attributes are not stored. Modification times are.</p></details>
-  <details><summary>Can two computers write to the same archive?</summary><p>Not at the same time. The lock is local, not network-wide.</p></details>
-</main>
-</div>
-<footer><div class="in"><span>Archivist, MIT licensed.</span><a href="https://github.com/Gusions/archivist">Source</a><a href="https://github.com/Gusions/archivist/releases">Releases</a><a href="https://github.com/Gusions/archivist/blob/main/README.it.md">Italiano</a></div></footer>
+  <h2 id="snapshots">Snapshots</h2>
+  <p>A snapshot appears only after it is completely written, so an interrupted backup never leaves a broken one. Earlier snapshots are never modified. If nothing changed, no new snapshot is created.</p>
+  <table><thead><tr><th>In the vault</th><th>What happens</th></tr></thead><tbody>
+    <tr><td>Notes, JSON, CSS</td><td>Deduplicated and compressed with zstd</td></tr>
+    <tr><td>PNG, JPEG, PDF, audio, video</td><td>Stored as they are</td></tr>
+    <tr><td>A few edited lines</td><td>Only the changed chunks are written</td></tr>
+    <tr><td>A moved file</td><td>No extra space</td></tr></tbody></table>
 
-<dialog id="pal" class="pal" aria-label="Search the page"><input id="q" type="text" placeholder="Search sections" autocomplete="off" spellcheck="false"><ul id="res"></ul></dialog>
+  <h2 id="restore">Restore</h2>
+  <p>Restore any snapshot into an empty or new folder. Contents, modification times and empty folders come back identical. Your original vault is never touched.</p>
+  <div class="panel">
+    <div class="ph"><span>Command</span><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
+<pre><code><span class="c-r">archivist</span> restore latest ~/Desktop/Restore</code></pre>
+    <div class="ph div"><span>Output</span></div>
+<pre><code>Restored 179 files (526.9 KB) to ~/Desktop/Restore</code></pre>
+  </div>
+  <p>Any snapshot can also be exported as a single portable <code>.tar.zst</code> that opens with Keka, 7-Zip or tar.</p>
+
+  <h2 id="verify">Verify</h2>
+  <p>A quick check confirms every needed block is present. A full check re-reads every block and recomputes its BLAKE3 hash.</p>
+  <div class="panel">
+    <div class="ph"><span>Command</span><div class="act"><button class="copy" type="button" aria-label="Copy"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg></button></div></div>
+<pre><code><span class="c-r">archivist</span> verify --full</code></pre>
+    <div class="ph div"><span>Output</span></div>
+<pre><code>4 snapshots, 184 blocks checked (full hash)
+<span class="c-g">Archive intact ✓</span></code></pre>
+  </div>
+
+  <h2 id="retention">Retention</h2>
+  <p>Keep the latest N snapshots plus one per day, week and month. After each backup Archivist applies the policy and reclaims the space. The newest snapshot is never deleted.</p>
+
+  <h2 id="cli">CLI</h2>
+  <table><thead><tr><th>Command</th><th>What it does</th></tr></thead><tbody>
+    <tr><td><code>backup</code></td><td>Create a snapshot</td></tr>
+    <tr><td><code>list</code> <code>stats</code></td><td>List snapshots, show sizes</td></tr>
+    <tr><td><code>verify [--full]</code></td><td>Check integrity</td></tr>
+    <tr><td><code>restore &lt;id|latest&gt; &lt;dir&gt;</code></td><td>Restore into an empty folder</td></tr>
+    <tr><td><code>export &lt;id|latest&gt; &lt;file&gt;</code></td><td>Write a <code>.tar.zst</code></td></tr>
+    <tr><td><code>prune</code></td><td>Apply the retention policy</td></tr>
+    <tr><td><code>ui</code></td><td>Interface in the browser</td></tr></tbody></table>
+  <p class="m">The local interface listens on 127.0.0.1 only and needs a random token on every call. Restore refuses paths containing <code>..</code>.</p>
+
+  <h2 id="limits">Limits</h2>
+  <details><summary>Is the archive encrypted?</summary><p>Not yet. Keep it on an encrypted volume such as FileVault, BitLocker or VeraCrypt if it holds sensitive data.</p></details>
+  <details><summary>Will it shrink my images?</summary><p>No, on purpose. Already-compressed media is stored unchanged. You save space on text, repeated content and history.</p></details>
+  <details><summary>What is not preserved?</summary><p>Symlinks are skipped. Unix permissions and extended attributes are not stored; modification times are.</p></details>
+  <details><summary>Can two computers write to one archive?</summary><p>Not at the same time. The lock is local, not network-wide.</p></details>
+  <details><summary>Does it replace Time Machine?</summary><p>No. It protects one thing, an Obsidian vault, with history and integrity checks. Keep your other backups.</p></details>
+
+  <footer><span>Archivist, MIT licensed</span><a href="https://github.com/Gusions/archivist">Source</a><a href="https://github.com/Gusions/archivist/releases">Releases</a><a href="https://github.com/Gusions/archivist/blob/main/README.it.md">Italiano</a></footer>
+</div></main>
+
+<dialog id="pal" class="pal" aria-label="Search"><input id="q" type="text" placeholder="Search" autocomplete="off" spellcheck="false"><ul id="res"></ul></dialog>
 <script>
 (function(){
-  var secs=[].slice.call(document.querySelectorAll("main h2, main h3")).map(function(h){return{t:h.textContent,id:h.id||"",el:h}});
-  secs=secs.filter(function(s){return s.id});
-  var side=[].slice.call(document.querySelectorAll(".side a"));
-  function spy(){var y=window.scrollY+120,cur=null;secs.forEach(function(s){if(s.el.offsetTop<=y)cur=s.id});side.forEach(function(a){a.classList.toggle("on",a.getAttribute("href")==="#"+cur)})}
+  var heads=[].slice.call(document.querySelectorAll("main h2[id]")).map(function(h){return{t:h.textContent,id:h.id,el:h}});
+  var links=[].slice.call(document.querySelectorAll("#nav a"));
+  function spy(){var y=window.scrollY+140,cur=null;heads.forEach(function(s){if(s.el.offsetTop<=y)cur=s.id});
+    links.forEach(function(a){var h=a.getAttribute("href").slice(1);a.classList.toggle("on",h===cur&&a.parentElement.classList.contains("sub"));if(!a.parentElement.classList.contains("sub"))a.classList.toggle("cur",(h==="top"&&(["how-it-works","terminal","app","explore","in-use",null].indexOf(cur)>-1))||h===cur)})}
   addEventListener("scroll",spy,{passive:true});spy();
-  document.querySelectorAll(".tab").forEach(function(b){b.onclick=function(){
-    document.querySelectorAll(".tab").forEach(function(x){x.setAttribute("aria-selected",x===b)});
-    document.querySelectorAll(".tabbed .blk").forEach(function(p){p.hidden=p.dataset.p!==b.dataset.t})}});
+  document.querySelectorAll(".pill").forEach(function(b){b.onclick=function(){
+    document.querySelectorAll(".pill").forEach(function(x){x.setAttribute("aria-selected",x===b)});
+    document.querySelectorAll(".tp").forEach(function(p){p.hidden=p.dataset.p!==b.dataset.t})}});
   document.querySelectorAll(".copy").forEach(function(b){b.onclick=function(){
-    var code=b.closest(".blk").querySelector("code").textContent;
-    try{navigator.clipboard.writeText(code).then(function(){b.textContent="Copied";setTimeout(function(){b.textContent="Copy"},1200)},function(){})}catch(e){}}});
-  var d=document.getElementById("pal"),q=document.getElementById("q"),res=document.getElementById("res"),sel=0,list=[];
-  function show(){var v=q.value.toLowerCase();list=secs.filter(function(s){return s.t.toLowerCase().indexOf(v)>-1});sel=0;
+    var t=b.closest(".panel").querySelector("code").textContent;try{navigator.clipboard.writeText(t)}catch(e){}}});
+  var d=document.getElementById("pal"),q=document.getElementById("q"),res=document.getElementById("res"),sel=0;
+  function show(){var v=q.value.toLowerCase(),list=heads.filter(function(s){return s.t.toLowerCase().indexOf(v)>-1});sel=0;
     res.innerHTML=list.map(function(s,i){return '<li><a href="#'+s.id+'" class="'+(i===0?"sel":"")+'">'+s.t+'<small>#'+s.id+'</small></a></li>'}).join("")||'<li style="padding:10px;color:var(--muted)">No match</li>'}
   function open(){try{d.showModal()}catch(e){return}q.value="";show();q.focus()}
-  document.getElementById("openPal").onclick=open;
+  document.getElementById("openPal").onclick=open;document.getElementById("openPal2").onclick=open;
   addEventListener("keydown",function(e){if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){e.preventDefault();open()}});
   q.oninput=show;
   q.onkeydown=function(e){var as=res.querySelectorAll("a");if(!as.length)return;
