@@ -17,7 +17,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use zeroize::Zeroize;
 
 const NONCE_LEN: usize = 24;
@@ -183,6 +183,22 @@ impl Keys {
         plain.zeroize();
         Ok(k)
     }
+}
+
+/// Argon2 is deliberately slow; the UI re-opens the repository on every poll, so remember the
+/// last successful unlock. The cache is keyed on the exact key file and a hash of the password.
+static UNLOCKED: Mutex<Option<(Vec<u8>, [u8; 32], Keys)>> = Mutex::new(None);
+
+pub fn unlock_cached(raw: &[u8], pass: &str) -> Result<Keys> {
+    let ph = *blake3::hash(pass.as_bytes()).as_bytes();
+    if let Some((r, p, k)) = UNLOCKED.lock().unwrap().as_ref() {
+        if r == raw && *p == ph {
+            return Ok(k.clone());
+        }
+    }
+    let k = Keys::from_keyfile(raw, pass)?;
+    *UNLOCKED.lock().unwrap() = Some((raw.to_vec(), ph, k.clone()));
+    Ok(k)
 }
 
 // ---------- passphrase for this process ----------

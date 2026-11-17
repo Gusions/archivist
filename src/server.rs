@@ -1,5 +1,7 @@
 use crate::backup::{self, Progress};
 use crate::ops;
+use crate::backend::LocalBackend;
+use crate::crypto;
 use crate::repo::Repo;
 use crate::settings::{detect_vaults, expand, Settings};
 use anyhow::Result;
@@ -88,6 +90,44 @@ fn do_backup(s: Settings, prog: &Progress) -> Result<Value> {
     Ok(serde_json::to_value(r)?)
 }
 
+/// "none" (nothing there yet), "plain" or "encrypted".
+fn repo_kind(path: &str) -> &'static str {
+    if path.is_empty() {
+        return "none";
+    }
+    let p = PathBuf::from(path);
+    if Repo::is_encrypted_at(&p) {
+        "encrypted"
+    } else if Repo::is_repo(&p) {
+        "plain"
+    } else {
+        "none"
+    }
+}
+
+fn check_new_password(p: &str) -> Result<()> {
+    if p.chars().count() < 8 {
+        anyhow::bail!(tr!("rs.password_short"));
+    }
+    Ok(())
+}
+
+/// Verify a password against the encrypted archive in `path` (without touching the process password).
+fn try_unlock(path: &str, pass: &str) -> Result<()> {
+    if repo_kind(path) != "encrypted" {
+        anyhow::bail!(tr!("rs.not_encrypted"));
+    }
+    Repo::open_with(Arc::new(LocalBackend::new(&PathBuf::from(path))), path, Some(pass)).map(|_| ())
+}
+
+fn create_encrypted(path: &str, pass: &str) -> Result<()> {
+    if path.is_empty() {
+        anyhow::bail!(tr!("rs.repo_unset"));
+    }
+    check_new_password(pass)?;
+    Repo::init_encrypted(&PathBuf::from(path), pass).map(|_| ())
+}
+
 fn open_repo(app: &S) -> Result<Repo, (StatusCode, String)> {
     let p = app.settings.lock().unwrap().repo.clone();
     if p.is_empty() {
@@ -123,15 +163,24 @@ async fn state(State(app): State<S>) -> Json<Value> {
     *app.last_seen.lock().unwrap() = Instant::now();
     let s = app.settings.lock().unwrap().clone();
     let (mut snaps, mut stats, mut err) = (json!([]), Value::Null, Value::Null);
-    if !s.repo.is_empty() && Repo::is_repo(&PathBuf::from(&s.repo)) {
-        match Repo::open(&PathBuf::from(&s.repo)) {
-            Ok(r) => {
-                let mut m = r.list_meta().unwrap_or_default();
-                m.reverse();
-                snaps = serde_json::to_value(m).unwrap();
-                stats = serde_json::to_value(r.stats().unwrap_or_default()).unwrap();
+    let kind = repo_kind(&s.repo);
+    let mut locked = false;
+    if kind != "none" {
+        if kind == "encrypted" && crypto::password().is_none() {
+            locked = true;
+        } else {
+            let opened = tokio::task::block_in_place(|| Repo::open(&PathBuf::from(&s.repo)));
+            match opened {
+                Ok(r) => {
+                    let mut m = r.list_meta().unwrap_or_default();
+                    m.reverse();
+                    snaps = serde_json::to_value(m).unwrap();
+                    stats = serde_json::to_value(r.stats().unwrap_or_default()).unwrap();
+                }
+                // a wrong password from the environment: ask again instead of showing an error
+                Err(_) if kind == "encrypted" => locked = true,
+                Err(e) => err = json!(e.to_string()),
             }
-            Err(e) => err = json!(e.to_string()),
         }
     }
     let mut job = serde_json::to_value(app.job.lock().unwrap().clone()).unwrap();
@@ -142,7 +191,7 @@ async fn state(State(app): State<S>) -> Json<Value> {
         "bytes": app.prog.bytes.load(Relaxed),
         "stored": app.prog.stored.load(Relaxed),
     });
-    Json(json!({"version": env!("CARGO_PKG_VERSION"), "settings": s, "snapshots": snaps, "stats": stats, "error": err, "job": job, "detected_vaults": detect_vaults(), "lang": crate::i18n::current(), "langs": crate::i18n::available().iter().map(|(c, n)| json!({"code": c, "name": n})).collect::<Vec<_>>()}))
+    Json(json!({"version": env!("CARGO_PKG_VERSION"), "settings": s, "snapshots": snaps, "stats": stats, "error": err, "repo_kind": kind, "locked": locked, "job": job, "detected_vaults": detect_vaults(), "lang": crate::i18n::current(), "langs": crate::i18n::available().iter().map(|(c, n)| json!({"code": c, "name": n})).collect::<Vec<_>>()}))
 }
 
 async fn put_settings(State(app): State<S>, Json(mut s): Json<Settings>) -> Res {
@@ -158,6 +207,36 @@ async fn put_settings(State(app): State<S>, Json(mut s): Json<Settings>) -> Res 
 async fn i18n_catalog(axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>) -> Json<Value> {
     let l = q.get("lang").map(|s| crate::i18n::resolve(s)).unwrap_or_else(crate::i18n::current);
     Json(crate::i18n::catalog_json(&l))
+}
+
+#[derive(Deserialize)]
+struct PassReq {
+    password: String,
+}
+
+async fn unlock(State(app): State<S>, Json(r): Json<PassReq>) -> Res {
+    let path = app.settings.lock().unwrap().repo.clone();
+    let pw = r.password.clone();
+    tokio::task::spawn_blocking(move || try_unlock(&path, &pw)).await.map_err(bad)?.map_err(bad)?;
+    crypto::set_password(Some(r.password));
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn encrypt_create(State(app): State<S>, Json(r): Json<PassReq>) -> Res {
+    let path = app.settings.lock().unwrap().repo.clone();
+    let pw = r.password.clone();
+    tokio::task::spawn_blocking(move || create_encrypted(&path, &pw)).await.map_err(bad)?.map_err(bad)?;
+    crypto::set_password(Some(r.password));
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn encrypt_password(State(app): State<S>, Json(r): Json<PassReq>) -> Res {
+    check_new_password(&r.password).map_err(bad)?;
+    let repo = open_repo(&app)?;
+    let pw = r.password.clone();
+    tokio::task::spawn_blocking(move || repo.change_password(&pw)).await.map_err(bad)?.map_err(bad)?;
+    crypto::set_password(Some(r.password));
+    Ok(Json(json!({"ok": true})))
 }
 
 async fn run_backup(State(app): State<S>) -> Res {
@@ -262,6 +341,9 @@ pub fn run(
             .route("/api/state", get(state))
             .route("/api/settings", post(put_settings))
             .route("/api/i18n", get(i18n_catalog))
+            .route("/api/unlock", post(unlock))
+            .route("/api/encrypt/create", post(encrypt_create))
+            .route("/api/encrypt/password", post(encrypt_password))
             .route("/api/backup", post(run_backup))
             .route("/api/restore", post(run_restore))
             .route("/api/export", post(run_export))
@@ -283,4 +365,50 @@ pub fn run(
         axum::serve(listener, router).await?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn password_policy() {
+        assert!(check_new_password("short").is_err());
+        assert!(check_new_password("long enough").is_ok());
+    }
+
+    #[test]
+    fn create_unlock_and_kind_flow() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("arch").display().to_string();
+        assert_eq!(repo_kind(&p), "none");
+        assert_eq!(repo_kind(""), "none");
+        assert!(create_encrypted(&p, "short").is_err(), "weak password refused");
+        assert_eq!(repo_kind(&p), "none", "nothing was created");
+        create_encrypted(&p, "a good password").unwrap();
+        assert_eq!(repo_kind(&p), "encrypted");
+        assert!(try_unlock(&p, "wrong password").is_err());
+        assert!(try_unlock(&p, "a good password").is_ok());
+        // an existing archive is never overwritten
+        assert!(create_encrypted(&p, "another password").is_err());
+        assert!(try_unlock(&p, "a good password").is_ok());
+    }
+
+    #[test]
+    fn plain_archive_is_reported_and_not_unlockable() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("plain");
+        Repo::init(&root).unwrap();
+        let p = root.display().to_string();
+        assert_eq!(repo_kind(&p), "plain");
+        assert!(try_unlock(&p, "whatever1").is_err());
+        assert!(create_encrypted(&p, "a good password").is_err());
+    }
+
+    #[test]
+    fn non_empty_folder_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("x.txt"), "x").unwrap();
+        assert!(create_encrypted(&d.path().display().to_string(), "a good password").is_err());
+    }
 }
