@@ -1,27 +1,28 @@
-//! Repository content-addressed: chunk deduplicati e compressi, raccolti in pack.
+//! Content-addressed repository: deduplicated, compressed chunks gathered in packs.
 //!
-//! Layout su disco:
-//!   <repo>/format                  marker di versione
-//!   <repo>/packs/<name>.pack       chunk concatenati: [tag][payload] (tag 0 = raw, 1 = zstd)
-//!   <repo>/packs/<name>.idx        indice JSON del pack (scritto SOLO a pack completo)
-//!   <repo>/snapshots/<id>.meta.json  metadati leggeri
-//!   <repo>/snapshots/<id>.snap.zst   elenco file -> chunk (JSON compresso)
+//! Layout (keys on the storage backend, see `backend.rs`):
+//!   format                     version marker
+//!   packs/<name>.pack          concatenated chunks: [tag][payload] (tag 0 = raw, 1 = zstd)
+//!   packs/<name>.idx           JSON index of the pack (written ONLY once the pack is complete)
+//!   snapshots/<id>.meta.json   light metadata
+//!   snapshots/<id>.snap.zst    file -> chunk list (compressed JSON)
+//!   lock                       exclusive lock with heartbeat
 //!
-//! Un pack senza .idx è considerato scarto di un backup interrotto e viene ignorato.
+//! A pack without `.idx` is debris of an interrupted backup and is ignored.
 
+use crate::backend::{Backend, LocalBackend};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 const FORMAT: &str = "archivist-repo-v1";
 const PACK_TARGET: u64 = 64 * 1024 * 1024;
+const LOCK_KEY: &str = "lock";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct FileEntry {
@@ -66,27 +67,26 @@ struct PackIndex {
 
 struct OpenPack {
     name: String,
-    w: BufWriter<File>,
-    off: u64,
+    buf: Vec<u8>,
     entries: Vec<(String, u64, u32)>,
 }
 
 pub struct Repo {
-    pub root: PathBuf,
+    be: Arc<dyn Backend>,
     packs: RwLock<Vec<String>>,
     index: RwLock<HashMap<String, Loc>>,
     writer: Mutex<Option<OpenPack>>,
 }
 
-/// How often the lock owner touches the lock file, and how long a lock may go
+/// How often the lock owner refreshes the lock, and how long a lock may go
 /// untouched before it is considered abandoned (crashed process).
 const LOCK_HEARTBEAT: Duration = Duration::from_secs(15);
 const LOCK_STALE: Duration = Duration::from_secs(120);
 
-/// Exclusive repository lock. A background heartbeat keeps the file fresh while
-/// the owner is alive, so a long backup is never mistaken for a dead one.
+/// Exclusive repository lock. A background heartbeat keeps it fresh while the
+/// owner is alive, so a long backup is never mistaken for a dead one.
 pub struct RepoLock {
-    path: PathBuf,
+    be: Arc<dyn Backend>,
     token: String,
     stop: Option<Sender<()>>,
     beat: Option<JoinHandle<()>>,
@@ -99,38 +99,10 @@ impl Drop for RepoLock {
             let _ = h.join();
         }
         // only remove the lock if it is still ours
-        if fs::read_to_string(&self.path).is_ok_and(|c| c == self.token) {
-            let _ = fs::remove_file(&self.path);
+        if self.be.get(LOCK_KEY).is_ok_and(|c| c == self.token.as_bytes()) {
+            let _ = self.be.delete(LOCK_KEY);
         }
     }
-}
-
-/// Write a file atomically and durably: temp file, fsync, rename, fsync of the
-/// parent directory. A crash leaves either the old file or the new one, never a
-/// partial one.
-pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
-    let tmp = path.with_extension(format!(
-        "{}.tmp",
-        path.extension().and_then(|e| e.to_str()).unwrap_or("dat")
-    ));
-    {
-        let mut f = File::create(&tmp)?;
-        f.write_all(data)?;
-        f.sync_all()?;
-    }
-    fs::rename(&tmp, path)?;
-    sync_dir(path.parent().unwrap_or_else(|| Path::new(".")));
-    Ok(())
-}
-
-/// Flush a directory entry to disk (no-op where unsupported, e.g. Windows).
-pub(crate) fn sync_dir(dir: &Path) {
-    #[cfg(unix)]
-    if let Ok(d) = File::open(dir) {
-        let _ = d.sync_all();
-    }
-    #[cfg(not(unix))]
-    let _ = dir;
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -142,24 +114,17 @@ pub struct RepoStats {
 }
 
 impl Repo {
+    /// Is there a repository in this local folder?
     pub fn is_repo(root: &Path) -> bool {
         root.join("format").is_file()
     }
 
+    /// Create a repository in a local folder (must be new or empty).
     pub fn init(root: &Path) -> Result<Repo> {
-        if !Self::is_repo(root) {
-            if root.is_dir() && fs::read_dir(root)?.next().is_some() {
-                bail!(tr!("rs.repo_not_empty", path = root.display()));
-            }
-            fs::create_dir_all(root)?;
+        if !Self::is_repo(root) && root.is_dir() && std::fs::read_dir(root)?.next().is_some() {
+            bail!(tr!("rs.repo_not_empty", path = root.display()));
         }
-        fs::create_dir_all(root.join("packs"))?;
-        fs::create_dir_all(root.join("snapshots"))?;
-        // the format marker last: its presence means the layout is complete
-        if !Self::is_repo(root) {
-            write_atomic(&root.join("format"), FORMAT.as_bytes())?;
-        }
-        Self::open(root)
+        Self::init_with(Arc::new(LocalBackend::new(root)))
     }
 
     pub fn open_or_init(root: &Path) -> Result<Repo> {
@@ -171,13 +136,26 @@ impl Repo {
     }
 
     pub fn open(root: &Path) -> Result<Repo> {
-        let f = fs::read_to_string(root.join("format"))
-            .with_context(|| tr!("rs.not_a_repo", path = root.display()))?;
+        Self::open_with(Arc::new(LocalBackend::new(root)), &root.display().to_string())
+    }
+
+    /// Create a repository on any backend (no-op if one already exists there).
+    pub fn init_with(be: Arc<dyn Backend>) -> Result<Repo> {
+        if !be.exists("format")? {
+            // the format marker goes last: its presence means the repository is usable
+            be.put("format", FORMAT.as_bytes())?;
+        }
+        Self::open_with(be, "")
+    }
+
+    pub fn open_with(be: Arc<dyn Backend>, label: &str) -> Result<Repo> {
+        let f = be.get("format").with_context(|| tr!("rs.not_a_repo", path = label))?;
+        let f = String::from_utf8_lossy(&f);
         if f.trim() != FORMAT {
             bail!(tr!("rs.unsupported_format", v = f.trim()));
         }
         let repo = Repo {
-            root: root.to_path_buf(),
+            be,
             packs: RwLock::new(vec![]),
             index: RwLock::new(HashMap::new()),
             writer: Mutex::new(None),
@@ -189,19 +167,19 @@ impl Repo {
     fn load_index(&self) -> Result<()> {
         let mut packs = self.packs.write().unwrap();
         let mut index = self.index.write().unwrap();
-        for e in fs::read_dir(self.root.join("packs"))? {
-            let p = e?.path();
-            if p.extension().and_then(|s| s.to_str()) != Some("idx") {
+        let listing = self.be.list("packs/")?;
+        let present: HashSet<&str> = listing.iter().map(|(k, _)| k.as_str()).collect();
+        for (key, _) in &listing {
+            let Some(name) = key.strip_prefix("packs/").and_then(|k| k.strip_suffix(".idx")) else {
+                continue;
+            };
+            if !present.contains(Self::pack_key(name).as_str()) {
                 continue;
             }
-            let name = p.file_stem().unwrap().to_string_lossy().to_string();
-            if !self.pack_path(&name).is_file() {
-                continue;
-            }
-            let idx: PackIndex = serde_json::from_slice(&fs::read(&p)?)
-                .with_context(|| tr!("rs.corrupt_index", path = p.display()))?;
+            let idx: PackIndex = serde_json::from_slice(&self.be.get(key)?)
+                .with_context(|| tr!("rs.corrupt_index", path = key))?;
             let pi = packs.len() as u32;
-            packs.push(name);
+            packs.push(name.to_string());
             for (h, off, len) in idx.chunks {
                 index.entry(h).or_insert(Loc { pack: pi, off, len });
             }
@@ -209,45 +187,36 @@ impl Repo {
         Ok(())
     }
 
-    fn pack_path(&self, name: &str) -> PathBuf {
-        self.root.join("packs").join(format!("{name}.pack"))
+    fn pack_key(name: &str) -> String {
+        format!("packs/{name}.pack")
     }
-    fn idx_path(&self, name: &str) -> PathBuf {
-        self.root.join("packs").join(format!("{name}.idx"))
+    fn idx_key(name: &str) -> String {
+        format!("packs/{name}.idx")
+    }
+    fn meta_key(id: &str) -> String {
+        format!("snapshots/{id}.meta.json")
+    }
+    fn snap_key(id: &str) -> String {
+        format!("snapshots/{id}.snap.zst")
     }
 
     pub fn lock(&self) -> Result<RepoLock> {
-        let p = self.root.join("lock");
-        if let Ok(m) = fs::metadata(&p) {
-            let stale = m
-                .modified()
-                .ok()
-                .and_then(|t| t.elapsed().ok())
-                .map(|d| d > LOCK_STALE)
-                .unwrap_or(false);
-            if stale {
-                let _ = fs::remove_file(&p);
-            }
+        if self.be.age(LOCK_KEY)?.is_some_and(|a| a > LOCK_STALE) {
+            let _ = self.be.delete(LOCK_KEY);
         }
         let token = format!("{}:{:016x}", std::process::id(), rand::random::<u64>());
-        match OpenOptions::new().write(true).create_new(true).open(&p) {
-            Ok(mut f) => {
-                f.write_all(token.as_bytes())?;
-                f.sync_all()?;
-            }
-            Err(_) => bail!(tr!("rs.repo_busy")),
+        if !self.be.put_new(LOCK_KEY, token.as_bytes())? {
+            bail!(tr!("rs.repo_busy"));
         }
         let (tx, rx) = mpsc::channel::<()>();
-        let hb_path = p.clone();
+        let be = self.be.clone();
         let beat = std::thread::spawn(move || {
             // recv_timeout returns Err(Disconnected) as soon as the lock is dropped
             while let Err(mpsc::RecvTimeoutError::Timeout) = rx.recv_timeout(LOCK_HEARTBEAT) {
-                if let Ok(f) = OpenOptions::new().write(true).open(&hb_path) {
-                    let _ = f.set_modified(std::time::SystemTime::now());
-                }
+                let _ = be.touch(LOCK_KEY);
             }
         });
-        Ok(RepoLock { path: p, token, stop: Some(tx), beat: Some(beat) })
+        Ok(RepoLock { be: self.be.clone(), token, stop: Some(tx), beat: Some(beat) })
     }
 
     pub fn has_chunk(&self, h: &str) -> bool {
@@ -257,7 +226,7 @@ impl Repo {
     fn encode(data: &[u8], try_compress: bool, level: i32) -> Result<Vec<u8>> {
         if try_compress {
             let c = zstd::bulk::compress(data, level)?;
-            // tieni la versione compressa solo se risparmia almeno il 3%
+            // keep the compressed version only if it saves at least 3%
             if c.len() * 100 < data.len() * 97 {
                 let mut out = Vec::with_capacity(c.len() + 1);
                 out.push(1);
@@ -271,7 +240,7 @@ impl Repo {
         Ok(out)
     }
 
-    /// Salva un chunk. Ritorna (hash, byte scritti, nuovo?).
+    /// Store a chunk. Returns (hash, bytes written, new?).
     pub fn put_chunk(&self, data: &[u8], try_compress: bool, level: i32) -> Result<(String, u64, bool)> {
         let hash = blake3::hash(data).to_hex().to_string();
         if self.has_chunk(&hash) {
@@ -282,7 +251,7 @@ impl Repo {
         Ok((hash, stored, stored > 0))
     }
 
-    /// Scrive i byte già codificati nel pack corrente. 0 se il chunk esiste già.
+    /// Append already-encoded bytes to the current pack. 0 if the chunk already exists.
     fn append_raw(&self, hash: &str, enc: &[u8]) -> Result<u64> {
         let mut guard = self.writer.lock().unwrap();
         if self.has_chunk(hash) {
@@ -290,8 +259,7 @@ impl Repo {
         }
         if guard.is_none() {
             let name = format!("pack-{:016x}", rand::random::<u64>());
-            let f = File::create(self.pack_path(&name))?;
-            *guard = Some(OpenPack { name, w: BufWriter::with_capacity(1 << 20, f), off: 0, entries: vec![] });
+            *guard = Some(OpenPack { name, buf: Vec::new(), entries: vec![] });
         }
         let pk = guard.as_mut().unwrap();
         let pi = {
@@ -304,35 +272,29 @@ impl Repo {
                 }
             }
         };
-        pk.w.write_all(enc)?;
-        let loc = Loc { pack: pi, off: pk.off, len: enc.len() as u32 };
-        pk.entries.push((hash.to_string(), pk.off, enc.len() as u32));
-        pk.off += enc.len() as u64;
+        let off = pk.buf.len() as u64;
+        pk.buf.extend_from_slice(enc);
+        let loc = Loc { pack: pi, off, len: enc.len() as u32 };
+        pk.entries.push((hash.to_string(), off, enc.len() as u32));
         self.index.write().unwrap().insert(hash.to_string(), loc);
-        if pk.off >= PACK_TARGET {
+        if pk.buf.len() as u64 >= PACK_TARGET {
             let done = guard.take().unwrap();
             self.finalize(done)?;
         }
         Ok(enc.len() as u64)
     }
 
-    fn finalize(&self, mut pk: OpenPack) -> Result<()> {
-        pk.w.flush()?;
-        pk.w.get_ref().sync_all()?;
+    /// Upload the pack, then publish its index (the index makes the pack visible).
+    fn finalize(&self, pk: OpenPack) -> Result<()> {
         if pk.entries.is_empty() {
-            drop(pk.w);
-            let _ = fs::remove_file(self.pack_path(&pk.name));
             return Ok(());
         }
-        drop(pk.w);
-        // pack content is already on disk; make its directory entry durable too,
-        // then publish the index atomically (the index makes the pack visible)
-        sync_dir(&self.root.join("packs"));
-        write_atomic(&self.idx_path(&pk.name), &serde_json::to_vec(&PackIndex { chunks: pk.entries })?)?;
+        self.be.put(&Self::pack_key(&pk.name), &pk.buf)?;
+        self.be.put(&Self::idx_key(&pk.name), &serde_json::to_vec(&PackIndex { chunks: pk.entries })?)?;
         Ok(())
     }
 
-    /// Chiude il pack in scrittura. Da chiamare a fine backup.
+    /// Close the pack being written. Call at the end of a backup.
     pub fn flush(&self) -> Result<()> {
         let mut guard = self.writer.lock().unwrap();
         if let Some(pk) = guard.take() {
@@ -343,11 +305,14 @@ impl Repo {
 
     fn read_raw(&self, loc: Loc) -> Result<Vec<u8>> {
         let name = self.packs.read().unwrap()[loc.pack as usize].clone();
-        let mut f = File::open(self.pack_path(&name))?;
-        f.seek(SeekFrom::Start(loc.off))?;
-        let mut buf = vec![0u8; loc.len as usize];
-        f.read_exact(&mut buf)?;
-        Ok(buf)
+        // a chunk of the pack still being written lives only in memory
+        if let Some(pk) = self.writer.lock().unwrap().as_ref() {
+            if pk.name == name {
+                let (o, e) = (loc.off as usize, loc.off as usize + loc.len as usize);
+                return Ok(pk.buf[o..e].to_vec());
+            }
+        }
+        self.be.get_range(&Self::pack_key(&name), loc.off, loc.len as usize)
     }
 
     fn decode(raw: &[u8]) -> Result<Vec<u8>> {
@@ -372,18 +337,13 @@ impl Repo {
         Ok(data)
     }
 
-    // ---------- snapshot ----------
-
-    fn snap_dir(&self) -> PathBuf {
-        self.root.join("snapshots")
-    }
+    // ---------- snapshots ----------
 
     pub fn list_meta(&self) -> Result<Vec<Meta>> {
         let mut v = vec![];
-        for e in fs::read_dir(self.snap_dir())? {
-            let p = e?.path();
-            if p.file_name().and_then(|s| s.to_str()).map_or(false, |n| n.ends_with(".meta.json")) {
-                if let Ok(m) = serde_json::from_slice::<Meta>(&fs::read(&p)?) {
+        for (key, _) in self.be.list("snapshots/")? {
+            if key.ends_with(".meta.json") {
+                if let Ok(m) = serde_json::from_slice::<Meta>(&self.be.get(&key)?) {
                     v.push(m);
                 }
             }
@@ -413,7 +373,7 @@ impl Repo {
 
     pub fn load_snapshot(&self, spec: &str) -> Result<Snapshot> {
         let id = self.resolve(spec)?;
-        let raw = fs::read(self.snap_dir().join(format!("{id}.snap.zst")))?;
+        let raw = self.be.get(&Self::snap_key(&id))?;
         Ok(serde_json::from_slice(&zstd::stream::decode_all(&raw[..])?)?)
     }
 
@@ -427,7 +387,7 @@ impl Repo {
     pub fn unique_id(&self, base: &str) -> String {
         let mut id = base.to_string();
         let mut n = 1;
-        while self.snap_dir().join(format!("{id}.meta.json")).exists() {
+        while self.be.exists(&Self::meta_key(&id)).unwrap_or(false) {
             id = format!("{base}-{n}");
             n += 1;
         }
@@ -437,33 +397,32 @@ impl Repo {
     pub fn save_snapshot(&self, s: &Snapshot) -> Result<()> {
         let id = &s.meta.id;
         let z = zstd::stream::encode_all(&serde_json::to_vec(s)?[..], 9)?;
-        write_atomic(&self.snap_dir().join(format!("{id}.snap.zst")), &z)?;
+        self.be.put(&Self::snap_key(id), &z)?;
         // meta last: the snapshot "exists" only when it is complete
-        write_atomic(&self.snap_dir().join(format!("{id}.meta.json")), &serde_json::to_vec_pretty(&s.meta)?)?;
+        self.be.put(&Self::meta_key(id), &serde_json::to_vec_pretty(&s.meta)?)?;
         Ok(())
     }
 
     pub fn delete_snapshot(&self, spec: &str) -> Result<String> {
         let id = self.resolve(spec)?;
-        fs::remove_file(self.snap_dir().join(format!("{id}.meta.json")))?;
-        let _ = fs::remove_file(self.snap_dir().join(format!("{id}.snap.zst")));
+        self.be.delete(&Self::meta_key(&id))?;
+        let _ = self.be.delete(&Self::snap_key(&id));
         Ok(id)
     }
 
-    // ---------- statistiche e compattazione ----------
+    // ---------- statistics and compaction ----------
 
     pub fn stats(&self) -> Result<RepoStats> {
         let mut disk = 0;
         let mut packs = 0;
-        for e in fs::read_dir(self.root.join("packs"))? {
-            let e = e?;
-            disk += e.metadata()?.len();
-            if e.path().extension().and_then(|s| s.to_str()) == Some("pack") {
+        for (key, size) in self.be.list("packs/")? {
+            disk += size;
+            if key.ends_with(".pack") {
                 packs += 1;
             }
         }
-        for e in fs::read_dir(self.snap_dir())? {
-            disk += e?.metadata()?.len();
+        for (_, size) in self.be.list("snapshots/")? {
+            disk += size;
         }
         Ok(RepoStats {
             disk_bytes: disk,
@@ -473,62 +432,51 @@ impl Repo {
         })
     }
 
-    /// Elimina i chunk non referenziati riscrivendo i pack parzialmente usati.
-    /// Ritorna i byte liberati.
+    /// Delete unreferenced chunks by rewriting partly used packs.
+    /// Returns the bytes freed.
     pub fn compact(&self, referenced: &HashSet<String>) -> Result<u64> {
         self.flush()?;
         let before = self.stats()?.disk_bytes;
+        let listing = self.be.list("packs/")?;
+        let keys: HashSet<&str> = listing.iter().map(|(k, _)| k.as_str()).collect();
         let mut names = vec![];
-        for e in fs::read_dir(self.root.join("packs"))? {
-            let p = e?.path();
-            let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
-            let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-            match ext {
-                "idx" => names.push(stem),
-                // pack orfani (backup interrotto) o file temporanei
-                "pack" if !self.idx_path(&stem).exists() => {
-                    let _ = fs::remove_file(&p);
+        for (key, _) in &listing {
+            let Some(file) = key.strip_prefix("packs/") else { continue };
+            if let Some(stem) = file.strip_suffix(".idx") {
+                names.push(stem.to_string());
+            } else if let Some(stem) = file.strip_suffix(".pack") {
+                // orphan pack (interrupted backup)
+                if !keys.contains(Self::idx_key(stem).as_str()) {
+                    let _ = self.be.delete(key);
                 }
-                "tmp" => {
-                    let _ = fs::remove_file(&p);
-                }
-                _ => {}
+            } else if file.ends_with(".tmp") {
+                let _ = self.be.delete(key);
             }
         }
-        // i pack idx.tmp hanno estensione "tmp" (gestito sopra)
         for name in names {
-            let idx: PackIndex = serde_json::from_slice(&fs::read(self.idx_path(&name))?)?;
+            let idx: PackIndex = serde_json::from_slice(&self.be.get(&Self::idx_key(&name))?)?;
             let used: Vec<_> = idx.chunks.iter().filter(|(h, _, _)| referenced.contains(h)).collect();
             if used.len() == idx.chunks.len() {
                 continue;
             }
-            // nuovo pack con i soli chunk usati (scritto PRIMA di cancellare il vecchio)
-            let mut newname = None;
+            // new pack with only the used chunks (written BEFORE the old one is deleted)
             if !used.is_empty() {
                 let nn = format!("pack-{:016x}", rand::random::<u64>());
-                let mut src = File::open(self.pack_path(&name))?;
-                let mut w = BufWriter::new(File::create(self.pack_path(&nn))?);
-                let mut off = 0u64;
+                let src = self.be.get(&Self::pack_key(&name))?;
+                let mut buf = Vec::new();
                 let mut entries = vec![];
                 for (h, o, l) in &used {
-                    src.seek(SeekFrom::Start(*o))?;
-                    let mut buf = vec![0u8; *l as usize];
-                    src.read_exact(&mut buf)?;
-                    w.write_all(&buf)?;
-                    entries.push((h.clone(), off, *l));
-                    off += *l as u64;
+                    let (o, l) = (*o as usize, *l as usize);
+                    entries.push((h.clone(), buf.len() as u64, l as u32));
+                    buf.extend_from_slice(&src[o..o + l]);
                 }
-                w.flush()?;
-                w.get_ref().sync_all()?;
-                drop(w);
-                write_atomic(&self.idx_path(&nn), &serde_json::to_vec(&PackIndex { chunks: entries })?)?;
-                newname = Some(nn);
+                self.be.put(&Self::pack_key(&nn), &buf)?;
+                self.be.put(&Self::idx_key(&nn), &serde_json::to_vec(&PackIndex { chunks: entries })?)?;
             }
-            let _ = newname;
-            fs::remove_file(self.idx_path(&name))?;
-            fs::remove_file(self.pack_path(&name))?;
+            self.be.delete(&Self::idx_key(&name))?;
+            self.be.delete(&Self::pack_key(&name))?;
         }
-        // ricarica l'indice
+        // reload the index
         self.packs.write().unwrap().clear();
         self.index.write().unwrap().clear();
         self.load_index()?;
@@ -540,8 +488,10 @@ impl Repo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::MemBackend;
     use crate::backup::{run_backup, Progress};
     use crate::ops;
+    use std::fs;
 
     fn make_vault(dir: &Path) {
         fs::create_dir_all(dir.join("Notes/empty")).unwrap();
@@ -570,7 +520,7 @@ mod tests {
         let l = repo.lock().unwrap();
         assert!(repo.lock().is_err());
         drop(l);
-        assert!(!repo.root.join("lock").exists());
+        assert!(!d.path().join("r").join("lock").exists());
         assert!(repo.lock().is_ok());
     }
 
@@ -578,11 +528,11 @@ mod tests {
     fn stale_lock_is_taken_over_fresh_one_is_not() {
         let d = tempfile::tempdir().unwrap();
         let repo = Repo::init(&d.path().join("r")).unwrap();
-        let p = repo.root.join("lock");
+        let p = d.path().join("r").join("lock");
         fs::write(&p, "999999").unwrap();
         assert!(repo.lock().is_err(), "a fresh foreign lock must be respected");
         let old = std::time::SystemTime::now() - Duration::from_secs(3600);
-        File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
+        fs::File::options().write(true).open(&p).unwrap().set_modified(old).unwrap();
         assert!(repo.lock().is_ok(), "an abandoned lock must be taken over");
     }
 
@@ -592,20 +542,9 @@ mod tests {
         let repo = Repo::init(&d.path().join("r")).unwrap();
         let first = repo.lock().unwrap();
         // simulate takeover by another process
-        fs::write(repo.root.join("lock"), "other:owner").unwrap();
+        fs::write(d.path().join("r").join("lock"), "other:owner").unwrap();
         drop(first);
-        assert!(repo.root.join("lock").exists());
-    }
-
-    #[test]
-    fn write_atomic_replaces_and_leaves_no_tmp() {
-        let d = tempfile::tempdir().unwrap();
-        let p = d.path().join("x.json");
-        write_atomic(&p, b"one").unwrap();
-        write_atomic(&p, b"two").unwrap();
-        assert_eq!(fs::read(&p).unwrap(), b"two");
-        let names: Vec<_> = fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
-        assert_eq!(names.len(), 1);
+        assert!(d.path().join("r").join("lock").exists());
     }
 
     #[test]
@@ -660,4 +599,56 @@ mod tests {
         assert!(!rroot.join("packs/pack-deadbeefdeadbeef.pack").exists());
         assert!(!rroot.join("packs/pack-deadbeefdeadbeef.idx.tmp").exists());
     }
+
+    #[test]
+    fn full_lifecycle_on_an_in_memory_backend() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        let mem = Arc::new(MemBackend::default());
+        let repo = Repo::init_with(mem.clone()).unwrap();
+        let prog = Progress::default();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        fs::write(vault.join("Notes/c.md"), "second").unwrap();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        assert_eq!(repo.list_meta().unwrap().len(), 2);
+
+        // reopen from the same bytes: nothing depends on in-process state
+        let repo = Repo::open_with(mem.clone(), "mem").unwrap();
+        let out = d.path().join("out");
+        ops::restore(&repo, "latest", &out, &prog).unwrap();
+        assert_eq!(tree(&vault), tree(&out));
+        assert!(ops::verify(&repo, true, &prog).unwrap().ok);
+
+        // dropping the oldest snapshot and compacting keeps the latest restorable
+        let first = repo.list_meta().unwrap()[0].id.clone();
+        repo.delete_snapshot(&first).unwrap();
+        ops::gc(&repo).unwrap();
+        let out2 = d.path().join("out2");
+        ops::restore(&repo, "latest", &out2, &prog).unwrap();
+        assert_eq!(tree(&vault), tree(&out2));
+        // only protocol keys are used, nothing leaks outside the layout
+        assert!(mem.keys().iter().all(|k| k == "format"
+            || k.starts_with("packs/")
+            || k.starts_with("snapshots/")
+            || k == "lock"));
+    }
+
+    #[test]
+    fn stale_lock_on_any_backend() {
+        let mem = Arc::new(MemBackend::default());
+        let repo = Repo::init_with(mem.clone()).unwrap();
+        mem.raw_put("lock", b"someone");
+        assert!(repo.lock().is_err());
+        mem.backdate("lock", Duration::from_secs(3600));
+        assert!(repo.lock().is_ok());
+    }
+
+    #[test]
+    fn open_rejects_unknown_format() {
+        let mem = Arc::new(MemBackend::default());
+        mem.raw_put("format", b"archivist-repo-v99");
+        assert!(Repo::open_with(mem, "mem").is_err());
+    }
 }
+
