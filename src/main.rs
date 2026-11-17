@@ -1,5 +1,6 @@
 #[macro_use]
 mod i18n;
+mod backend;
 mod backup;
 mod ops;
 mod repo;
