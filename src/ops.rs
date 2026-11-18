@@ -32,7 +32,7 @@ impl Read for ChunkReader<'_> {
             }
             self.buf = self
                 .repo
-                .get_chunk(&self.chunks[self.next], false)
+                .get_chunk(&self.chunks[self.next], true)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
             self.pos = 0;
             self.next += 1;

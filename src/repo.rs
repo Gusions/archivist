@@ -1000,4 +1000,24 @@ mod tests {
         let again = Repo::open(&d.path().join("r")).unwrap();
         assert!(crate::copy::copy_repo(&repo, &again, 3, &Progress::default()).is_err());
     }
+
+    #[test]
+    fn restore_of_a_plain_archive_reports_a_corrupted_block() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault); // img.png is stored raw, so zstd cannot notice damage by itself
+        let rroot = d.path().join("r");
+        let repo = Repo::init(&rroot).unwrap();
+        let prog = Progress::default();
+        run_backup(&repo, &vault, &[], 3, &prog).unwrap();
+        let pack = fs::read_dir(rroot.join("packs")).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "pack")).unwrap();
+        let mut raw = fs::read(&pack).unwrap();
+        // damage the middle of the raw-stored image data
+        let mid = raw.len() / 2;
+        raw[mid] ^= 0xff;
+        fs::write(&pack, raw).unwrap();
+        let repo = Repo::open(&rroot).unwrap();
+        let rep = ops::restore(&repo, "latest", &d.path().join("out"), &prog).unwrap();
+        assert!(!rep.errors.is_empty(), "a restore must not report success for damaged data");
+    }
 }
