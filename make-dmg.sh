@@ -26,8 +26,8 @@ cat > "$APP/Contents/Info.plist" <<'PL'
   <key>CFBundleIdentifier</key><string>it.archivist.app</string>
   <key>CFBundleIconFile</key><string>Archivist</string>
   <key>CFBundleExecutable</key><string>Archivist</string>
-  <key>CFBundleVersion</key><string>0.1.0</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>0.2.0</string>
+  <key>CFBundleShortVersionString</key><string>0.2.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
