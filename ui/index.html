@@ -88,6 +88,11 @@ dialog{border:0;border-radius:14px;background:var(--bg);color:var(--ink);padding
 dialog::backdrop{background:rgba(0,0,0,.28)}
 .dlg{padding:22px 24px}
 #brBody{min-height:320px}
+.pick{display:flex;gap:8px}.pick input{flex:1;min-width:0}
+.more{position:relative;display:inline-flex}
+.mbtn{border:0;background:transparent;color:var(--accent);font:inherit;font-size:18px;line-height:1;padding:0 4px;border-radius:6px}.mbtn:hover{background:var(--fill)}
+.menu{position:fixed;z-index:50;min-width:160px;background:var(--bg);border-radius:10px;padding:4px;box-shadow:0 8px 28px rgba(0,0,0,.28),0 0 0 .5px rgba(0,0,0,.2)}
+.menu a{display:block;padding:7px 10px;border-radius:6px;color:var(--ink);cursor:pointer}.menu a:hover{background:var(--fill)}.menu a.del{color:var(--red)}
 .chk{display:flex;gap:8px;align-items:flex-start;margin:12px 2px 0;font-size:13px;color:var(--ink)}.chk input{margin-top:2px}.chk .sub{margin:0;display:block;color:var(--ink2);font-size:12.5px}
 .dlg h3{margin:0 0 4px;font-size:16px}.dlg .sub{margin:0 0 6px;color:var(--ink2)}
 .dlg h2{margin-left:4px}
@@ -190,7 +195,7 @@ code{font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:v
     <button class="nav" data-view="snaps"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span data-i18n="nav.snapshots"></span></button>
     <button class="nav" data-view="check"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 2.5v5.5c0 4.2-2.9 7.4-7 9-4.1-1.6-7-4.8-7-9V6z"/><path d="M8.8 12l2.2 2.2 4.2-4.4"/></svg><span data-i18n="nav.verify"></span></button>
     <div class="cap" data-i18n="nav.vault"></div>
-    <div class="nav mute" id="vaultNav"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.6l2 2.2h7.4a2 2 0 0 1 2 2v7.3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg><span id="vaultName"></span></div>
+    <button class="nav mute" id="vaultNav" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.6l2 2.2h7.4a2 2 0 0 1 2 2v7.3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg><span id="vaultName"></span></button>
     <div class="spacer"></div>
     <button class="nav mute" id="openSettings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6"/></svg><span data-i18n="nav.settings"></span></button>
   </nav>
@@ -279,6 +284,7 @@ function when(iso){const d=new Date(iso),n=new Date(),r=new Intl.RelativeTimeFor
   const days=Math.round((new Date(n.getFullYear(),n.getMonth(),n.getDate())-new Date(d.getFullYear(),d.getMonth(),d.getDate()))/864e5);
   if(days===0||days===1)return cap1(r.format(-days,"day"))+", "+hm;
   return d.toLocaleDateString(L(),{day:"numeric",month:"short"})+", "+hm}
+const midTrunc=(p,max)=>p.length>max?p.slice(0,Math.ceil(max*0.4))+"…"+p.slice(-Math.floor(max*0.55)):p;
 const base=p=>p.split(/[\\/]/).filter(Boolean).pop()||p;
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -306,11 +312,23 @@ document.addEventListener("mousedown",e=>{
 function note(msg,kind){const n=$("note");if(!msg){n.hidden=true;return}n.hidden=false;n.className="banner "+(kind||"");n.innerHTML='<a class="x" id="xnote" role="button">'+esc(t("btn.dismiss"))+'</a>'+esc(msg);$("xnote").onclick=()=>note("")}
 
 /* ---- viste ---- */
+function timeLabel(m){
+  const d=new Date(m.created),dup=S.snapshots.filter(x=>x.created.slice(0,16)===m.created.slice(0,16)).length>1;
+  return d.toLocaleTimeString(L(),{hour:"2-digit",minute:"2-digit",...(dup?{second:"2-digit"}:{})});
+}
+function dayLabel(iso){
+  const d=new Date(iso),n=new Date(),days=Math.round((new Date(n.getFullYear(),n.getMonth(),n.getDate())-new Date(d.getFullYear(),d.getMonth(),d.getDate()))/864e5);
+  if(days===0||days===1)return cap1(new Intl.RelativeTimeFormat(L(),{numeric:"auto"}).format(-days,"day"));
+  return cap1(d.toLocaleDateString(L(),{weekday:"long",day:"numeric",month:"long",...(d.getFullYear()===n.getFullYear()?{}:{year:"numeric"})}));
+}
 function snapRow(m,full){
   const sub=t("snap.sub",{files:num(m.files),size:fmt(m.bytes),written:fmt(m.added_bytes)});
+  const B=`<a data-a="browse" data-id="${m.id}">${esc(t("btn.browse"))}</a>`;
   const R=`<a data-a="restore" data-id="${m.id}">${esc(t("btn.restore"))}</a>`;
-  const acts=full?`<span class="acts"><a data-a="browse" data-id="${m.id}">${esc(t("btn.browse"))}</a>${R}<a data-a="export" data-id="${m.id}">${esc(t("btn.export"))}</a>${S.snapshots.length>1?`<a class="del" data-a="del" data-id="${m.id}">${esc(t("btn.delete"))}</a>`:""}</span>`:`<span class="acts">${R}</span>`;
-  return `<div class="row" style="min-height:56px"><span><span class="t">${esc(when(m.created))}</span><span class="sub">${esc(sub)}</span></span>${acts}</div>`;
+  const acts=full
+    ?`<span class="acts">${B}<span class="more"><button type="button" class="mbtn" data-menu aria-label="${esc(t("btn.more"))}" title="${esc(t("btn.more"))}">…</button><div class="menu" hidden>${R}<a data-a="export" data-id="${m.id}">${esc(t("btn.export"))}</a>${S.snapshots.length>1?`<a class="del" data-a="del" data-id="${m.id}">${esc(t("btn.delete"))}</a>`:""}</div></span></span>`
+    :`<span class="acts">${B}${R}</span>`;
+  return `<div class="row" style="min-height:56px"><span><span class="t">${esc(full?timeLabel(m):when(m.created))}</span><span class="sub">${esc(sub)}</span></span>${acts}</div>`;
 }
 const FREQ=[15,60,360,1440];
 function homeHTML(){
@@ -335,11 +353,15 @@ function homeHTML(){
   <h2>${esc(t("home.schedule"))}</h2><div class="grp">
     <div class="row"><span>${esc(t("home.auto"))}<span class="sub">${esc(S.schedule&&S.schedule.installed?t("home.auto_bg"):t("home.auto_sub"))}</span></span><button class="sw" role="switch" aria-checked="${on}" aria-label="${esc(t("home.auto"))}" id="swAuto"></button></div>
     <div class="row"><label for="selFreq">${esc(t("home.frequency"))}</label><select id="selFreq" ${on?"":"disabled"}>${opts}</select></div>
-    <div class="row"><span>${esc(t("home.destination"))}<span class="sub">${esc(s.repo?s.repo+(S.repo_kind==="encrypted"?" · "+t("home.encrypted"):""):t("home.destination_unset"))}</span></span><button class="btn sec" id="editDest">${esc(t("btn.change"))}</button></div></div>`;
+    <div class="row"><span>${esc(t("home.destination"))}<span class="sub" title="${esc(s.repo||"")}">${esc(s.repo?midTrunc(s.repo,46)+(S.repo_kind==="encrypted"?" · "+t("home.encrypted"):""):t("home.destination_unset"))}</span></span><button class="btn sec" id="editDest">${esc(t("btn.change"))}</button></div></div>`;
 }
 function snapsHTML(){
   const snaps=S.snapshots;
-  return `<h2>${esc(t(snaps.length==1?"snaps.header.one":"snaps.header.other",{n:snaps.length}))}</h2><div class="grp">${snaps.length?snaps.map(m=>snapRow(m,true)).join(""):`<div class="empty">${esc(t("snaps.empty"))}</div>`}</div>`;
+  if(!snaps.length)return `<div class="grp"><div class="empty">${esc(t("snaps.empty"))}</div></div>`;
+  const groups=[];
+  for(const m of snaps){const k=dayLabel(m.created);const g=groups[groups.length-1];if(g&&g.k===k)g.items.push(m);else groups.push({k,items:[m]})}
+  return `<p class="sub" style="margin:18px 16px 0">${esc(t(snaps.length==1?"snaps.header.one":"snaps.header.other",{n:snaps.length}))}</p>`+
+    groups.map(g=>`<h2>${esc(g.k)}</h2><div class="grp">${g.items.map(m=>snapRow(m,true)).join("")}</div>`).join("");
 }
 function checkHTML(){
   const r=S.settings.retention,none=!S.snapshots.length,d=none?"disabled":"";
@@ -460,7 +482,12 @@ function askPath({title,sub,label,value,ok}){return new Promise(res=>{
   $("pathForm").onsubmit=e=>{e.preventDefault();fin($("pathInput").value.trim()||null)};
   $("pathCancel").onclick=()=>fin(null);d.oncancel=()=>fin(null);d.showModal();$("pathInput").focus();$("pathInput").select()})}
 
+function closeMenus(){document.querySelectorAll(".menu").forEach(m=>m.hidden=true)}
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeMenus()});
 document.addEventListener("click",async e=>{
+  const mb=e.target.closest("[data-menu]");
+  if(mb){const m=mb.parentElement.querySelector(".menu"),open=!m.hidden;closeMenus();if(!open){m.hidden=false;const r=mb.getBoundingClientRect();m.style.top=(r.bottom+4)+"px";m.style.right=(window.innerWidth-r.right)+"px"}return}
+  if(!e.target.closest(".menu"))closeMenus();else setTimeout(closeMenus,0);
   const nav=e.target.closest(".nav[data-view]");if(nav){view=nav.dataset.view;render();return}
   const go=e.target.closest("[data-go]");if(go){view=go.dataset.go;render();return}
   const a=e.target.closest("[data-a]");if(a){const id=a.dataset.id,k=a.dataset.a;
@@ -484,6 +511,7 @@ $("backupBtn").onclick=()=>act("backup","POST");
 const TABS=[
   ["gen","set.tab.general",'<circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6"/>'],
   ["bak","set.tab.backup",'<path d="M4 7.5l8-3.5 8 3.5v9L12 20l-8-3.5z"/><path d="M4 7.5l8 3.5 8-3.5M12 11v9"/>'],
+  ["sec","set.tab.security",'<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/>'],
   ["ret","set.tab.retention",'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>']];
 const LEVELS=[[3,"comp.fast"],[6,"comp.balanced"],[12,"comp.high"],[19,"comp.max"]];
 const nearest=(l)=>LEVELS.reduce((a,b)=>Math.abs(b[0]-l)<Math.abs(a[0]-l)?b:a)[0];
@@ -515,6 +543,15 @@ function encGroup(){
   else r=row(t("set.enc.none"),s.repo?t("set.enc.none_sub"):t("set.enc.setup_first"),`<button type="button" class="btn sec" id="encCreate" ${s.repo?"":"disabled"}>${esc(t("btn.create_encrypted"))}</button>`);
   return `<h2>${esc(t("set.g.encryption"))}</h2><div class="grp">${r}</div>`;
 }
+async function pickFolder(which){
+  try{
+    const r=await api("pick-folder","POST",{start:S.settings[which]||"",prompt:t("pick."+which)});
+    if(!r.path)return;
+    const patch={[which]:r.path};
+    if(which==="vault"&&!S.settings.repo)patch.repo="~/Archivist Backups/"+base(r.path);
+    await commit(patch);
+  }catch(e){setErr=e.message;renderSettings()}
+}
 async function convertAction(){
   const r=await askNewPassword({title:t("enc.convert_title"),sub:t("enc.convert_sub"),ok:t("enc.convert"),remember:true,dest:S.settings.repo.replace(/[\/]+$/,"")+"-cifrato"});
   if(!r)return;
@@ -534,13 +571,13 @@ function paneHTML(){
   if(tab==="gen"){
     const det=(S.detected_vaults||[]).map(p=>`<button type="button" class="chip" data-p="${esc(p)}" title="${esc(p)}">${esc(base(p))}</button>`).join("");
     return `<h2>${esc(t("set.g.locations"))}</h2><div class="grp">
-      <div class="srow path"><label for="fVault">${esc(t("set.vault"))}</label><input type="text" id="fVault" value="${esc(s.vault)}" placeholder="${esc(t("set.vault_ph"))}" autocomplete="off" spellcheck="false">${det?`<div class="chips" title="${esc(t("set.detected"))}">${det}</div>`:""}</div>
-      <div class="srow path"><label for="fRepo">${esc(t("set.repo"))}</label><input type="text" id="fRepo" value="${esc(s.repo)}" placeholder="${esc(t("set.repo_ph"))}" autocomplete="off" spellcheck="false"><span class="hint" style="margin:0">${esc(t("set.repo_sub"))}</span></div></div>
-    ${encGroup()}
+      <div class="srow path"><label for="fVault">${esc(t("set.vault"))}</label><div class="pick"><input type="text" id="fVault" value="${esc(s.vault)}" placeholder="${esc(t("set.vault_ph"))}" autocomplete="off" spellcheck="false">${S.picker?`<button type="button" class="btn sec" data-pick="vault">${esc(t("btn.choose"))}</button>`:""}</div>${det?`<div class="chips" title="${esc(t("set.detected"))}">${det}</div>`:""}</div>
+      <div class="srow path"><label for="fRepo">${esc(t("set.repo"))}</label><div class="pick"><input type="text" id="fRepo" value="${esc(s.repo)}" placeholder="${esc(t("set.repo_ph"))}" autocomplete="off" spellcheck="false">${S.picker?`<button type="button" class="btn sec" data-pick="repo">${esc(t("btn.choose"))}</button>`:""}</div><span class="hint" style="margin:0">${esc(t("set.repo_sub"))}</span></div></div>
     <h2>${esc(t("set.g.appearance"))}</h2><div class="grp">
       ${row(t("set.theme"),"",seg("theme",s.theme||"system",THEMES.map(m=>[m,t("set.theme."+m)])))}
       ${row(t("set.language"),"",`<select id="fLang"><option value="system" ${s.lang==="system"||!s.lang?"selected":""}>${esc(t("set.lang.system"))}</option>${(S.langs||[]).map(l=>`<option value="${l.code}" ${s.lang===l.code?"selected":""}>${esc(l.name)}</option>`).join("")}</select>`)}</div>`;
   }
+  if(tab==="sec")return encGroup();
   if(tab==="bak"){
     const pats=s.exclude.map((p,i)=>`<div class="pat"><code>${esc(p)}</code><button type="button" data-rm="${i}" aria-label="${esc(t("set.excl_remove",{p}))}" title="${esc(t("set.excl_remove",{p}))}">×</button></div>`).join("");
     return `<h2>${esc(t("set.g.engine"))}</h2><div class="grp">
@@ -571,6 +608,7 @@ async function commit(patch,rerender){
 }
 function closeSettings(){settingsOpen=false;if($("settings").open)$("settings").close();render()}
 $("openSettings").onclick=openSettings;
+$("vaultNav").onclick=openSettings;
 $("closeSettings").onclick=closeSettings;
 $("settings").addEventListener("cancel",()=>{settingsOpen=false;setTimeout(render,0)});
 $("sTabs").onclick=e=>{const b=e.target.closest(".tab");if(!b)return;tab=b.dataset.tab;renderSettings()};
@@ -582,6 +620,7 @@ $("sPane").addEventListener("click",e=>{
   if(e.target.id==="addPat")addPattern();
   if(e.target.id==="encCreate")encAction("create");
   if(e.target.id==="encConvert")convertAction();
+  const pk=e.target.closest("[data-pick]");if(pk){pickFolder(pk.dataset.pick);return}
   if(e.target.id==="swBg")toggleBg();
   if(e.target.id==="swRemember")toggleRemember();
   if(e.target.id==="encChange")encAction("change");
