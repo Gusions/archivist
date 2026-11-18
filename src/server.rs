@@ -1,6 +1,7 @@
 use crate::backup::{self, Progress};
 use crate::ops;
 use crate::backend::LocalBackend;
+use crate::copy;
 use crate::crypto;
 use crate::keychain;
 use crate::schedule;
@@ -303,6 +304,42 @@ async fn set_schedule(State(app): State<S>, Json(r): Json<ScheduleReq>) -> Res {
     Ok(Json(json!({"ok": true})))
 }
 
+#[derive(Deserialize)]
+struct ConvertReq {
+    dest: String,
+    password: String,
+    #[serde(default)]
+    remember: bool,
+}
+
+/// Create an encrypted copy of the (plain) archive in `dest`, as a background job.
+async fn encrypt_convert(State(app): State<S>, Json(r): Json<ConvertReq>) -> Res {
+    let s = app.settings.lock().unwrap().clone();
+    if repo_kind(&s.repo) != "plain" {
+        return Err(bad(tr!("rs.not_plain")));
+    }
+    check_new_password(&r.password).map_err(bad)?;
+    let dest = PathBuf::from(expand(&r.dest));
+    if dest.as_os_str().is_empty() {
+        return Err(bad(tr!("rs.repo_unset")));
+    }
+    if std::fs::canonicalize(&s.repo).ok().is_some_and(|a| Some(a) == std::fs::canonicalize(&dest).ok()) {
+        return Err(bad(tr!("rs.copy_same")));
+    }
+    let src = open_repo(&app)?;
+    let (level, remember, pw) = (s.level, r.remember, r.password.clone());
+    start_job(&app, "copy", move |p| {
+        let dst = Repo::init_encrypted(&dest, &pw)?;
+        let rep = copy::copy_repo(&src, &dst, level, p)?;
+        let v = ops::verify(&dst, false, p)?;
+        if !v.ok {
+            anyhow::bail!(tr!("res.verify_bad"));
+        }
+        let remembered = remember && keychain::save(&keychain::account(&dest), &pw).is_ok();
+        Ok(json!({"dest": dest.display().to_string(), "copied": rep.copied, "written": rep.written, "remembered": remembered}))
+    })
+}
+
 async fn run_backup(State(app): State<S>) -> Res {
     let s = app.settings.lock().unwrap().clone();
     start_job(&app, "backup", move |p| do_backup(s, p))
@@ -462,6 +499,7 @@ pub fn run(
             .route("/api/i18n", get(i18n_catalog))
             .route("/api/unlock", post(unlock))
             .route("/api/keychain", post(set_keychain))
+            .route("/api/encrypt/convert", post(encrypt_convert))
             .route("/api/schedule", post(set_schedule))
             .route("/api/encrypt/create", post(encrypt_create))
             .route("/api/encrypt/password", post(encrypt_password))

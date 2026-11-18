@@ -89,9 +89,14 @@ fn mtime_ms(m: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+/// Worth trying zstd on this file? (already compressed formats are stored as they are)
+pub fn compressible(path: &str) -> bool {
+    let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    !INCOMPRESSIBLE.contains(&ext.as_str())
+}
+
 fn chunk_file(repo: &Repo, path: &Path, level: i32, prog: &Progress) -> Result<(Vec<String>, u64)> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    let compress = !INCOMPRESSIBLE.contains(&ext.as_str());
+    let compress = compressible(&path.to_string_lossy());
     let reader = BufReader::with_capacity(1 << 20, File::open(path)?);
     let mut hashes = vec![];
     let mut total = 0u64;

@@ -902,4 +902,102 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn plain_archive_copied_to_encrypted_restores_identically() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        fs::write(vault.join("Notes/Secret.md"), "COPY-MARKER ".repeat(400)).unwrap();
+        let src = Repo::init(&d.path().join("plain")).unwrap();
+        let prog = Progress::default();
+        run_backup(&src, &vault, &[], 3, &prog).unwrap();
+        fs::write(vault.join("Notes/b.md"), "hello again").unwrap();
+        run_backup(&src, &vault, &[], 3, &prog).unwrap();
+
+        let mem = Arc::new(MemBackend::default());
+        let dst = enc_repo(&mem);
+        let rep = crate::copy::copy_repo(&src, &dst, 3, &prog).unwrap();
+        assert_eq!((rep.copied, rep.skipped), (2, 0));
+
+        // same snapshot ids and dates, every chunk id changed (keyed), nothing readable at rest
+        let (a, b) = (src.list_meta().unwrap(), dst.list_meta().unwrap());
+        assert_eq!(a.iter().map(|m| (&m.id, &m.created)).collect::<Vec<_>>(), b.iter().map(|m| (&m.id, &m.created)).collect::<Vec<_>>());
+        let (sa, sb) = (src.load_snapshot("latest").unwrap(), dst.load_snapshot("latest").unwrap());
+        assert_eq!(sa.entries.len(), sb.entries.len());
+        assert!(sa.entries.iter().zip(&sb.entries).all(|(x, y)| x.path == y.path && x.size == y.size && x.chunks != y.chunks));
+        for k in mem.keys() {
+            if k == "format" {
+                continue;
+            }
+            let raw = mem.get_raw(&k);
+            for needle in ["COPY-MARKER", "Secret", "Notes"] {
+                assert!(!raw.windows(needle.len()).any(|w| w == needle.as_bytes()), "{k} leaks {needle}");
+            }
+        }
+
+        // reopen with the password: restore equals the vault, full verify passes, the source is untouched
+        let dst = Repo::open_with(mem.clone(), "m", Some("pw")).unwrap();
+        let out = d.path().join("out");
+        ops::restore(&dst, "latest", &out, &prog).unwrap();
+        assert_eq!(tree(&vault), tree(&out));
+        assert!(ops::verify(&dst, true, &prog).unwrap().ok);
+        assert!(ops::verify(&src, true, &prog).unwrap().ok);
+        // and the oldest snapshot is intact too
+        let out_old = d.path().join("out_old");
+        let first = dst.list_meta().unwrap()[0].id.clone();
+        ops::restore(&dst, &first, &out_old, &prog).unwrap();
+        assert_eq!(fs::read(out_old.join("Notes/b.md")).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn copy_is_incremental_and_resumable() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        let src = Repo::init(&d.path().join("src")).unwrap();
+        let prog = Progress::default();
+        run_backup(&src, &vault, &[], 3, &prog).unwrap();
+        let dst = Repo::init(&d.path().join("dst")).unwrap();
+        assert_eq!(crate::copy::copy_repo(&src, &dst, 3, &prog).unwrap().copied, 1);
+        // nothing new: nothing copied
+        let again = crate::copy::copy_repo(&src, &dst, 3, &prog).unwrap();
+        assert_eq!((again.copied, again.skipped, again.written), (0, 1, 0));
+        // a new snapshot in the source is the only thing that gets copied
+        fs::write(vault.join("Notes/c.md"), "new").unwrap();
+        run_backup(&src, &vault, &[], 3, &prog).unwrap();
+        let more = crate::copy::copy_repo(&src, &dst, 3, &prog).unwrap();
+        assert_eq!((more.copied, more.skipped), (1, 1));
+        assert_eq!(dst.list_meta().unwrap().len(), 2);
+        assert!(ops::verify(&dst, true, &prog).unwrap().ok);
+    }
+
+    #[test]
+    fn damaged_source_stops_the_copy_without_publishing_a_snapshot() {
+        let d = tempfile::tempdir().unwrap();
+        let vault = d.path().join("v");
+        make_vault(&vault);
+        let sroot = d.path().join("src");
+        let src = Repo::init(&sroot).unwrap();
+        let prog = Progress::default();
+        run_backup(&src, &vault, &[], 3, &prog).unwrap();
+        // flip a byte in a stored pack
+        let pack = fs::read_dir(sroot.join("packs")).unwrap().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "pack")).unwrap();
+        let mut raw = fs::read(&pack).unwrap();
+        let mid = raw.len() / 2;
+        raw[mid] ^= 0xff;
+        fs::write(&pack, raw).unwrap();
+        let src = Repo::open(&sroot).unwrap();
+        let dst = Repo::init(&d.path().join("dst")).unwrap();
+        assert!(crate::copy::copy_repo(&src, &dst, 3, &prog).is_err());
+        assert!(dst.list_meta().unwrap().is_empty(), "no snapshot may appear for a failed copy");
+    }
+
+    #[test]
+    fn copying_an_archive_onto_itself_is_impossible_because_of_the_lock() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = Repo::init(&d.path().join("r")).unwrap();
+        let again = Repo::open(&d.path().join("r")).unwrap();
+        assert!(crate::copy::copy_repo(&repo, &again, 3, &Progress::default()).is_err());
+    }
 }

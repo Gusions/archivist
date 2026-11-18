@@ -88,7 +88,7 @@ dialog{border:0;border-radius:14px;background:var(--bg);color:var(--ink);padding
 dialog::backdrop{background:rgba(0,0,0,.28)}
 .dlg{padding:22px 24px}
 #brBody{min-height:320px}
-.chk{display:flex;gap:8px;align-items:flex-start;margin:12px 2px 0;font-size:13px;color:var(--ink)}.chk input{margin-top:2px}.chk .sub{margin:0}
+.chk{display:flex;gap:8px;align-items:flex-start;margin:12px 2px 0;font-size:13px;color:var(--ink)}.chk input{margin-top:2px}.chk .sub{margin:0;display:block;color:var(--ink2);font-size:12.5px}
 .dlg h3{margin:0 0 4px;font-size:16px}.dlg .sub{margin:0 0 6px;color:var(--ink2)}
 .dlg h2{margin-left:4px}
 .fld{padding:10px 16px;border-top:1px solid var(--sep)}
@@ -232,7 +232,7 @@ code{font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:v
 
 <dialog id="encDlg"><form method="dialog" class="dlg" id="encForm">
   <h3 id="encTitle"></h3><p class="sub" id="encSub"></p>
-  <div class="grp"><div class="fld"><label for="encA" data-i18n="enc.password"></label><input type="password" id="encA" autocomplete="new-password"></div>
+  <div class="grp"><div class="fld" id="encDestWrap" hidden><label for="encDest" data-i18n="enc.dest"></label><input type="text" id="encDest" autocomplete="off" spellcheck="false"></div><div class="fld"><label for="encA" data-i18n="enc.password"></label><input type="password" id="encA" autocomplete="new-password"></div>
   <div class="fld"><label for="encB" data-i18n="enc.repeat"></label><input type="password" id="encB" autocomplete="new-password"></div></div>
   <label class="chk" id="encRememberWrap" hidden><input type="checkbox" id="encRemember"><span><span data-i18n="enc.remember"></span><span class="sub" data-i18n="enc.remember_sub"></span></span></label>
   <p class="sub" data-i18n="enc.warn"></p>
@@ -361,6 +361,9 @@ function render(){
   if(!j.running&&j.finished_at&&j.finished_at!==lastFinished){lastFinished=j.finished_at;showResult(j)}
   if(S.error)note(S.error,"bad");
 }
+async function offerSwitch(dest){
+  if(await askConfirm({title:t("dlg.use_new.title"),sub:t("dlg.use_new.sub",{dest}),ok:t("dlg.use_new.ok")}))saveSettings({repo:dest});
+}
 function showResult(job){
   if(job.ok===false){note(job.message,"bad");return}
   const r=job.report||{},k=job.kind;
@@ -371,6 +374,7 @@ function showResult(job){
   else if(k==="export")note(t("res.export_ok",{file:r.file,size:fmt(r.bytes)}),"ok");
   else if(k==="prune")note(t("res.prune_ok",{n:r.removed_snapshots.length,size:fmt(r.freed_bytes)}),"ok");
   else if(k==="forget")note(t("res.forget_ok"),"ok");
+  else if(k==="copy"){note(t("res.copy_ok",{n:num(r.copied),size:fmt(r.written),dest:r.dest}),"ok");offerSwitch(r.dest)}
 }
 function syncLock(){
   const d=$("unlockDlg");
@@ -382,11 +386,12 @@ $("unlockForm").onsubmit=async e=>{e.preventDefault();$("unErr").textContent="";
   try{await api("unlock","POST",{password:$("unPass").value,remember:!$("unRememberWrap").hidden&&$("unRemember").checked});$("unPass").value="";await refresh()}
   catch(x){$("unErr").textContent=x.message;$("unPass").select()}
   b.disabled=false};
-function askNewPassword({title,sub,ok,remember}){return new Promise(res=>{
+function askNewPassword({title,sub,ok,remember,dest}){return new Promise(res=>{
+  $("encDestWrap").hidden=dest==null;if(dest!=null)$("encDest").value=dest;
   $("encTitle").textContent=title;$("encSub").textContent=sub;$("encOk").textContent=ok;$("encA").value="";$("encB").value="";$("encErr").textContent="";
   const kc=S.keychain&&S.keychain.supported;$("encRememberWrap").hidden=!kc;$("encRemember").checked=!!remember;
   const d=$("encDlg");let done=false;const fin=v=>{if(done)return;done=true;d.close();res(v)};
-  $("encForm").onsubmit=e=>{e.preventDefault();if($("encA").value!==$("encB").value){$("encErr").textContent=t("enc.mismatch");return}fin({pw:$("encA").value,remember:kc&&$("encRemember").checked})};
+  $("encForm").onsubmit=e=>{e.preventDefault();if($("encA").value!==$("encB").value){$("encErr").textContent=t("enc.mismatch");return}if(dest!=null&&!$("encDest").value.trim()){$("encErr").textContent=t("enc.dest");return}fin({pw:$("encA").value,remember:kc&&$("encRemember").checked,dest:$("encDest").value.trim()})};
   $("encCancel").onclick=()=>fin(null);d.oncancel=()=>fin(null);d.showModal();$("encA").focus()})}
 async function refresh(){
   try{S=await api("state");await loadCatalog();syncLock();
@@ -506,9 +511,15 @@ function encGroup(){
   const k=S.repo_kind,s=S.settings;let r;
   if(k==="encrypted"){r=row(t("set.enc.on"),t("set.enc.on_sub"),`<button type="button" class="btn sec" id="encChange">${esc(t("enc.change"))}</button>`);
     if(S.keychain&&S.keychain.supported)r+=row(t("set.remember"),t("set.remember_sub"),`<button class="sw" role="switch" aria-checked="${!!S.keychain.remembered}" aria-label="${esc(t("set.remember"))}" id="swRemember"></button>`)}
-  else if(k==="plain")r=row(t("set.enc.plain"),t("set.enc.plain_sub"),"");
+  else if(k==="plain")r=row(t("set.enc.plain"),t("set.enc.plain_sub"),`<button type="button" class="btn sec" id="encConvert" ${S.job.running?"disabled":""}>${esc(t("set.enc.convert_btn"))}</button>`);
   else r=row(t("set.enc.none"),s.repo?t("set.enc.none_sub"):t("set.enc.setup_first"),`<button type="button" class="btn sec" id="encCreate" ${s.repo?"":"disabled"}>${esc(t("btn.create_encrypted"))}</button>`);
   return `<h2>${esc(t("set.g.encryption"))}</h2><div class="grp">${r}</div>`;
+}
+async function convertAction(){
+  const r=await askNewPassword({title:t("enc.convert_title"),sub:t("enc.convert_sub"),ok:t("enc.convert"),remember:true,dest:S.settings.repo.replace(/[\/]+$/,"")+"-cifrato"});
+  if(!r)return;
+  try{await api("encrypt/convert","POST",{dest:r.dest,password:r.pw,remember:r.remember});setErr="";closeSettings();await refresh()}
+  catch(e){setErr=e.message;renderSettings()}
 }
 async function encAction(kind){
   const create=kind==="create";
@@ -570,6 +581,7 @@ $("sPane").addEventListener("click",e=>{
   const rm=e.target.closest("[data-rm]");if(rm){commit({exclude:S.settings.exclude.filter((_,i)=>i!==+rm.dataset.rm)});return}
   if(e.target.id==="addPat")addPattern();
   if(e.target.id==="encCreate")encAction("create");
+  if(e.target.id==="encConvert")convertAction();
   if(e.target.id==="swBg")toggleBg();
   if(e.target.id==="swRemember")toggleRemember();
   if(e.target.id==="encChange")encAction("change");
