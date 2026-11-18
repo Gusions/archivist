@@ -4,6 +4,7 @@ use crate::backend::LocalBackend;
 use crate::copy;
 use crate::crypto;
 use crate::keychain;
+use crate::picker;
 use crate::schedule;
 use crate::repo::Repo;
 use crate::settings::{detect_vaults, expand, Settings};
@@ -194,7 +195,7 @@ async fn state(State(app): State<S>) -> Json<Value> {
         "bytes": app.prog.bytes.load(Relaxed),
         "stored": app.prog.stored.load(Relaxed),
     });
-    Json(json!({"version": env!("CARGO_PKG_VERSION"), "settings": s, "snapshots": snaps, "stats": stats, "error": err, "repo_kind": kind, "locked": locked, "schedule": schedule::status(), "keychain": {"supported": keychain::supported(), "remembered": kind == "encrypted" && !locked && keychain::load(&keychain::account(&PathBuf::from(&s.repo))).is_some()}, "job": job, "detected_vaults": detect_vaults(), "lang": crate::i18n::current(), "langs": crate::i18n::available().iter().map(|(c, n)| json!({"code": c, "name": n})).collect::<Vec<_>>()}))
+    Json(json!({"version": env!("CARGO_PKG_VERSION"), "settings": s, "snapshots": snaps, "stats": stats, "error": err, "repo_kind": kind, "locked": locked, "picker": picker::supported(), "schedule": schedule::status(), "keychain": {"supported": keychain::supported(), "remembered": kind == "encrypted" && !locked && keychain::load(&keychain::account(&PathBuf::from(&s.repo))).is_some()}, "job": job, "detected_vaults": detect_vaults(), "lang": crate::i18n::current(), "langs": crate::i18n::available().iter().map(|(c, n)| json!({"code": c, "name": n})).collect::<Vec<_>>()}))
 }
 
 async fn put_settings(State(app): State<S>, Json(mut s): Json<Settings>) -> Res {
@@ -338,6 +339,24 @@ async fn encrypt_convert(State(app): State<S>, Json(r): Json<ConvertReq>) -> Res
         let remembered = remember && keychain::save(&keychain::account(&dest), &pw).is_ok();
         Ok(json!({"dest": dest.display().to_string(), "copied": rep.copied, "written": rep.written, "remembered": remembered}))
     })
+}
+
+#[derive(Deserialize)]
+struct PickReq {
+    #[serde(default)]
+    start: String,
+    #[serde(default)]
+    prompt: String,
+}
+
+/// Open the system "choose a folder" dialog and return the chosen path (null if cancelled).
+async fn pick_folder(Json(r): Json<PickReq>) -> Res {
+    if !picker::supported() {
+        return Err(bad(tr!("rs.picker_unsupported")));
+    }
+    let start = expand(&r.start);
+    let path = tokio::task::spawn_blocking(move || picker::pick_folder(&start, &r.prompt)).await.map_err(bad)?;
+    Ok(Json(json!({ "path": path })))
 }
 
 async fn run_backup(State(app): State<S>) -> Res {
@@ -499,6 +518,7 @@ pub fn run(
             .route("/api/i18n", get(i18n_catalog))
             .route("/api/unlock", post(unlock))
             .route("/api/keychain", post(set_keychain))
+            .route("/api/pick-folder", post(pick_folder))
             .route("/api/encrypt/convert", post(encrypt_convert))
             .route("/api/schedule", post(set_schedule))
             .route("/api/encrypt/create", post(encrypt_create))

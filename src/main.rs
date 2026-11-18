@@ -5,6 +5,7 @@ mod backup;
 mod copy;
 mod crypto;
 mod keychain;
+mod picker;
 mod schedule;
 mod ops;
 mod repo;
