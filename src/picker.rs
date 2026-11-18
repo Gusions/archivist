@@ -32,7 +32,7 @@ pub fn pick_folder(start: &str, prompt: &str) -> Option<String> {
         let default = start.map(|s| format!(" default location (POSIX file \"{}\")", applescript_quote(s))).unwrap_or_default();
         let script = format!("POSIX path of (choose folder with prompt \"{}\"{})", applescript_quote(prompt), default);
         let out = Command::new("osascript").args(["-e", "tell current application to activate", "-e", &script]).output().ok()?;
-        return clean(&out);
+        clean(&out)
     }
     #[cfg(target_os = "windows")]
     {
@@ -42,7 +42,7 @@ pub fn pick_folder(start: &str, prompt: &str) -> Option<String> {
             start.map(|s| format!("$d.SelectedPath = '{}';", s.replace('\'', "''"))).unwrap_or_default()
         );
         let out = Command::new("powershell").args(["-NoProfile", "-Command", &ps]).output().ok()?;
-        return clean(&out);
+        clean(&out)
     }
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
@@ -58,7 +58,7 @@ pub fn pick_folder(start: &str, prompt: &str) -> Option<String> {
             c.args(["--getexistingdirectory", start.unwrap_or("."), "--title", prompt]);
             c.output().ok()?
         };
-        return clean(&out);
+        clean(&out)
     }
 }
 
