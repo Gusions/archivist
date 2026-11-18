@@ -161,7 +161,7 @@ Da dove arriva la password, in ordine: impostata nella sessione dell'app, `ARCHI
 - Un solo scrittore alla volta: l'archivio è bloccato mentre girano backup, prune o copia. Il lock è tenuto vivo da un heartbeat, quindi un backup lungo non viene scambiato per uno andato in crash, e un lock abbandonato scade dopo due minuti.
 - L'UI ascolta solo su `127.0.0.1`, richiede un token casuale per ogni chiamata e rifiuta Host non locali (anti DNS-rebinding).
 - Il ripristino rifiuta percorsi con `..` e cartelle di destinazione non vuote.
-- I danni vengono rilevati: `verify --full` rifà l'hash di ogni blocco. In un archivio cifrato ogni blocco è anche autenticato quando viene letto, quindi un blocco alterato non può essere ripristinato.
+- I danni vengono rilevati: `verify --full` rifà l'hash di ogni blocco, e ripristino ed export controllano l'hash di ogni blocco mentre lo leggono, quindi un file danneggiato viene segnalato invece di essere ripristinato in silenzio. In un archivio cifrato ogni blocco è anche autenticato.
 
 ## Non ancora
 

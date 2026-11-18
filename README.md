@@ -161,7 +161,7 @@ Where the password comes from, in order: set in the app session, `ARCHIVIST_PASS
 - Only one writer at a time: the archive is locked while a backup, prune or copy runs. The lock is kept alive by a heartbeat, so a long backup is not mistaken for a crashed one, and an abandoned lock expires after two minutes.
 - The local UI listens on `127.0.0.1` only, requires a random token on every call and rejects non-local `Host` headers (DNS-rebinding defense).
 - Restore rejects paths containing `..` and non-empty destinations.
-- Damage is detected: `verify --full` re-hashes every block. In an encrypted archive every block is also authenticated when it is read, so a modified block cannot be restored.
+- Damage is detected: `verify --full` re-hashes every block, and restore and export check each block's hash as they read it, so a damaged file is reported instead of being restored silently. In an encrypted archive every block is also authenticated.
 
 ## Not yet
 
