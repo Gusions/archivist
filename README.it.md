@@ -5,10 +5,17 @@
 # Archivist
 
 *Fai il backup del tuo vault Obsidian. Ripristinalo byte per byte.*  
-*Incrementale, deduplicato, lossless. Un solo piccolo eseguibile Rust.*  
-**English** · [Italiano](README.it.md)
+*Incrementale, deduplicato, lossless.*  
 
 [English](README.md) · **Italiano** · [Sito](https://archivist.gusions.com) · [Download](https://github.com/Gusions/archivist/releases/latest)
+
+[![Versione](https://img.shields.io/badge/version-0.1.0-0A66E8)](Cargo.toml)
+[![Lingue](https://img.shields.io/badge/lingue-2-0A66E8)](#aggiungere-una-lingua)
+[![Piattaforme](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-0A66E8)](#piattaforme)
+[![CI](https://github.com/Gusions/archivist/actions/workflows/ci.yml/badge.svg)](https://github.com/Gusions/archivist/actions/workflows/ci.yml)
+[![Release](https://github.com/Gusions/archivist/actions/workflows/release.yml/badge.svg)](https://github.com/Gusions/archivist/actions/workflows/release.yml)
+[![Licenza: MIT](https://img.shields.io/badge/license-MIT-0A66E8)](LICENSE)
+[![Stelle](https://img.shields.io/github/stars/Gusions/archivist?style=flat&color=0A66E8)](https://github.com/Gusions/archivist/stargazers)
 
 Snapshot, non copie · lossless per costruzione · verifica integrità inclusa · niente cloud, niente account · traducibile
 
@@ -16,58 +23,100 @@ Snapshot, non copie · lossless per costruzione · verifica integrità inclusa �
 
 **Un vault cresce per anni. Archivist conserva ogni backup come snapshot completo, scrive solo ciò che è cambiato e non altera mai i tuoi file.**
 
+| Cosa c'è nel vault | Cosa fa Archivist | Perdita di qualità |
+|---|---|---|
+| Note, testo, JSON, CSS | Deduplica a blocchi + compressione zstd | Nessuna |
+| PNG, JPEG, WebP, PDF, audio, video | Salvati così come sono (già compressi) | Nessuna |
+| Nota modificata (poche righe) | Scrive solo i blocchi cambiati, pochi KB | Nessuna |
+| File spostato o duplicato | Zero spazio in più | Nessuna |
+
 <p align="center"><img src="docs/screenshots/overview-light.png" width="780" alt="Archivist, panoramica"></p>
 
-## Cosa fa
-
-- **Snapshot incrementali**: ogni backup è una fotografia completa del vault, ma salva solo ciò che è cambiato.
-- **Deduplica a blocchi** (FastCDC + BLAKE3): una nota modificata di poche righe costa pochi KB, non l'intero file. Anche i file spostati o duplicati non occupano spazio due volte.
-- **Compressione zstd lossless** sui testi; immagini, PDF già compressi, video e audio non vengono ricompressi (zero perdita, zero tempo sprecato). **Mai** ricompressione con perdita.
-- **Ripristino bit-a-bit**: contenuto, date di modifica e cartelle vuote.
-- **Verifica integrità** rapida (presenza blocchi) o completa (rilegge e rifà l'hash di ogni blocco).
-- **Retention** automatica: ultimi N + giornalieri/settimanali/mensili.
-- **Export** di uno snapshot in un unico `.tar.zst` portabile.
-- Rilevamento automatico dei vault dalla configurazione di Obsidian.
-
-## Installazione
-
-Scarica il binario dalle Actions/Release del repo (macOS arm64/x64, Windows x64), oppure compila:
+## Avvio rapido
 
 ```bash
-cargo build --release      # richiede Rust: https://rustup.rs
-./target/release/archivist ui
+cargo build --release --features window   # richiede Rust: https://rustup.rs
+./target/release/archivist                # apre la finestra nativa
 ```
 
-macOS: al primo avvio se Gatekeeper blocca il binario → `xattr -d com.apple.quarantine archivist`.
+Nella finestra: scegli il vault (i vault Obsidian vengono rilevati da soli), scegli una cartella di backup (meglio su un altro disco), premi **Esegui backup**. Fine della configurazione.
 
-## App con finestra nativa (consigliata)
+Preferisci un'app già pronta? Scaricala da [Releases](../../releases): `Archivist-macOS-arm64.dmg` per Apple Silicon, più zip per macOS, Windows e Linux. Per creare il `.dmg` da solo su macOS esegui `./make-dmg.sh` (produce `dist/Archivist.app` e `dist/Archivist.dmg`).
 
-```bash
-cargo build --release --features window
-./target/release/archivist            # apre la finestra (senza argomenti)
+> Se Gatekeeper blocca l'app al primo avvio: `xattr -d com.apple.quarantine <percorso>`
+
+### Piattaforme
+
+| Piattaforma | Finestra | Stato |
+|---|---|---|
+| macOS (arm64, x64) | WebKit (di sistema) | Compilato e testato da CI; `.dmg` arm64 in ogni release; app non notarizzata (vedi nota Gatekeeper) |
+| Windows x64 | WebView2 (preinstallato su Win 10/11) | Compilato e testato da CI |
+| Linux x64 | WebKitGTK | Compilato ed eseguito in CI e in sviluppo |
+
+Nessun browser incluso: il binario pesa pochi MB.
+
+## Funzioni
+
+- **Snapshot incrementali**: ogni backup è una fotografia completa del vault.
+- **Deduplica a blocchi** (FastCDC + BLAKE3).
+- **Compressione lossless** (zstd) dove serve, nessuna dove non serve.
+- **Ripristino esatto**: contenuto, date di modifica, cartelle vuote.
+- **Cifratura** (opzionale, nei nuovi archivi): XChaCha20-Poly1305 con passphrase Argon2id; contenuti, nomi dei file e percorso del vault sono cifrati.
+- **Verifica integrità**: rapida (tutti i blocchi presenti) o completa (rilegge e rifà l'hash di ogni blocco).
+- **Retention**: ultimi N più giornalieri, settimanali, mensili. Lo snapshot più recente non viene mai eliminato.
+- **Sfoglia e ripristina singoli file**: cerca in uno snapshot, vedi cosa è cambiato rispetto al precedente, ripristina un file o una cartella (app e CLI).
+- **Export** di qualsiasi snapshot in un `.tar.zst` portabile.
+- **Backup in background** su macOS e password nel Portachiavi.
+- **Interfaccia nativa in stile macOS** con tema chiaro, scuro e di sistema.
+- **Traducibile**: ogni stringa sta in `i18n/<codice>.json` (inglese e italiano inclusi).
+
+## Come funziona
+
 ```
-Usa WebKit di sistema su macOS, WebView2 su Windows (preinstallato su Win 10/11), WebKitGTK su Linux: nessun browser, nessun Chromium incluso, binario di pochi MB.
-Su macOS `./make-dmg.sh` crea `dist/Archivist.app` e `dist/Archivist.dmg`.
+file del vault
+   |  tagliati in blocchi da ~64 KB (FastCDC)
+   v
+hash BLAKE3 per blocco ---- già salvato? ---- sì --> solo riferimento
+   |  no
+   v
+compressione zstd (saltata per i tipi incomprimibili)
+   v
+aggiunto a un pack (~64 MB)  -->  snapshot scritto per ultimo = visibile solo se completo
+```
 
-## Uso
+| Comando | Cosa fa |
+|---|---|
+| `archivist init --encrypt` | Crea un archivio cifrato (chiede una password) |
+| `archivist copy <dest> [--encrypt]` | Copia tutti gli snapshot in un altro archivio (ricodificando ogni blocco). Con `--encrypt` crea un archivio cifrato da uno in chiaro; ricopiando si aggiungono solo i nuovi snapshot |
+| `archivist passwd` | Cambia la password (i dati non vengono riscritti) |
+| `archivist backup` | Crea uno snapshot |
+| `archivist list` / `stats` | Elenca gli snapshot / mostra dimensioni e rapporto |
+| `archivist verify [--full]` | Controlla l'integrità |
+| `archivist restore <id\|latest> <cartella> [--path P]...` | Ripristina in una cartella vuota o nuova; `--path` ripristina solo quei file o cartelle |
+| `archivist files <id\|latest> [--grep TESTO]` | Elenca i file di uno snapshot |
+| `archivist diff [vecchio] [nuovo]` | Mostra file aggiunti, modificati e rimossi fra due snapshot |
+| `archivist export <id\|latest> <file>` | Esporta come `.tar.zst` |
+| `archivist prune` | Applica la retention |
+| `archivist forget <id>` | Elimina uno snapshot e libera lo spazio non referenziato |
+| `archivist schedule install\|status\|remove` | Backup in background (agente launchd su macOS) |
+| `archivist keychain save\|forget` | Ricorda o dimentica la password dell'archivio nel Portachiavi (macOS) |
+| `archivist window` | Apre la finestra nativa (build con `--features window`) |
+| `archivist ui` | Interfaccia web locale nel browser invece della finestra |
 
 ```bash
-archivist ui                          # (o doppio clic sull'eseguibile) apre l'interfaccia nel browser (127.0.0.1, protetta da token)
 archivist --repo /Volumes/Disco/ObsidianBackup backup --vault ~/Documents/MioVault
-archivist list
-archivist stats
-archivist verify --full
-archivist restore latest ~/Desktop/Ripristino     # la cartella deve essere vuota o nuova
-archivist restore latest ~/Desktop/Una --path Notes/idea.md   # solo un file o una cartella
-archivist files latest --grep idea                # cerca tra i file di uno snapshot
-archivist diff                                    # cosa è cambiato rispetto allo snapshot precedente
-archivist export latest ~/Desktop/vault.tar.zst
-archivist prune                                   # applica la retention delle impostazioni
+archivist restore latest ~/Desktop/Ripristino
 ```
 
-Le impostazioni (vault, archivio, esclusioni, retention) si salvano da UI in
-`~/Library/Application Support/Archivist/settings.json` (macOS) o `%APPDATA%\Archivist\settings.json` (Windows);
-la CLI le usa come default.
+Le impostazioni (vault, cartella archivio, esclusioni, retention, tema, lingua) si salvano dall'interfaccia in `~/Library/Application Support/Archivist/settings.json` (macOS) o `%APPDATA%\Archivist\settings.json` (Windows); la CLI le usa come default.
+
+## Garanzie
+
+- Uno snapshot compare solo a scrittura completata. Un backup interrotto lascia al massimo dati orfani, ripuliti dalla prossima `prune`/`forget`. I backup precedenti non vengono mai modificati.
+- L'interfaccia locale ascolta solo su `127.0.0.1`, richiede un token casuale per ogni chiamata e rifiuta Host non locali (anti DNS-rebinding).
+- Il ripristino rifiuta percorsi con `..` e cartelle di destinazione non vuote.
+- Ripristino ed export rifanno l'hash di ogni blocco letto: un archivio danneggiato dà un errore chiaro invece di produrre file sbagliati in silenzio.
+- Le scritture nell'archivio sono durevoli e atomiche, con lock a heartbeat; test di crash e di andata e ritorno girano in CI su Linux, macOS e Windows.
 
 ## Backup in background
 
@@ -77,22 +126,43 @@ la CLI le usa come default.
 - Il backup automatico dentro l'app (Impostazioni, Backup) funziona solo ad app aperta.
 - `ARCHIVIST_CONFIG_DIR` indica un'altra cartella delle impostazioni (profili separati); un agente installato con quella variabile continua a usarla.
 
-## Come funziona (e garanzie)
+## Aggiungere una lingua
 
-- I file sono tagliati in blocchi di ~64 KB con content-defined chunking; ogni blocco è identificato dal suo hash BLAKE3 e salvato una sola volta (compresso con zstd) in pack da ~64 MB.
-- Uno snapshot compare solo a scrittura completata. Un backup interrotto lascia al massimo dati orfani, ripuliti dalla prossima `prune`/`forget`. I backup precedenti non vengono mai modificati.
-- L'UI ascolta solo su `127.0.0.1`, richiede un token casuale per ogni chiamata e rifiuta Host non locali (anti DNS-rebinding).
-- Il ripristino rifiuta percorsi con `..` e cartelle di destinazione non vuote.
+Copia `i18n/en.json` in `i18n/xx.json`, traduci i valori (mantieni i `{segnaposto}`), poi aggiungi una riga a `CATALOGS` in `src/i18n.rs`. Le chiavi mancanti ricadono sull'inglese. Lingua e tema (Sistema / Chiaro / Scuro) si scelgono da Impostazioni, Generale.
 
-## Limiti noti (v0.1)
+## Sviluppo
 
-- **Cifratura opzionale**: `archivist init --encrypt` crea un archivio cifrato (XChaCha20-Poly1305, chiave dalla password con Argon2id); contenuti, nomi dei file e percorso del vault sono cifrati. Non sono nascosti numero e date degli snapshot e le dimensioni dei blocchi. **Se perdi la password i dati non sono recuperabili.** Puoi creare, sbloccare e cambiare la password anche dall'app (Impostazioni, Cifratura). Per cifrare un archivio in chiaro esistente usa Impostazioni → Cifratura → "Crea copia cifrata" oppure `archivist copy <nuova-cartella> --encrypt`: tutti gli snapshot vengono copiati in un nuovo archivio cifrato e l'originale resta intatto. Negli script usa `ARCHIVIST_PASSWORD` o `ARCHIVIST_PASSWORD_FILE`.
-- Link simbolici ignorati; permessi Unix e attributi estesi non conservati (le date di modifica sì).
-- Non usare due operazioni di scrittura sullo stesso archivio da macchine diverse contemporaneamente (c'è un lock locale ma non su rete).
-- Vault con `.git` (plugin Obsidian Git): viene incluso come ogni altra cartella; aggiungi `.git` alle esclusioni se non lo vuoi.
+```bash
+cargo test                                  # test del motore
+cargo build --release --features window     # build con finestra nativa
+```
 
-## Lingue e tema
+Struttura: `src/repo.rs` (formato dell'archivio), `src/backend.rs` (backend di storage), `src/crypto.rs` (cifratura), `src/backup.rs` (chunking e snapshot), `src/copy.rs` (copia e cifratura di un archivio), `src/ops.rs` (ripristino, export, verifica, retention), `src/schedule.rs` e `src/keychain.rs` (backup in background, Portachiavi), `src/server.rs` (API locale), `src/window.rs` (finestra nativa e menu), `ui/index.html` (interfaccia), `i18n/` (stringhe).
 
-- Tutte le stringhe (interfaccia, motore, CLI, menu) stanno in `i18n/<codice>.json`, con segnaposto `{nome}`. Per aggiungere una lingua: copia `i18n/en.json` in `i18n/xx.json`, traducila e aggiungi una riga in `CATALOGS` di `src/i18n.rs`. Le chiavi mancanti ricadono sull'inglese.
-- Lingua e tema (Sistema / Chiaro / Scuro) si scelgono da Impostazioni → Generale; il tema si cambia anche con il pulsante nella barra. Il menu nativo di macOS usa la lingua al successivo avvio.
-- "Informazioni su Archivist" e "Impostazioni… ⌘," sono nel menu di sistema (macOS).
+## FAQ
+
+**Sostituisce Time Machine o la sincronizzazione cloud?**
+No. Protegge una cosa sola, un vault Obsidian, con storico e controlli di integrità. Tieni gli altri backup.
+
+**Riduce le mie immagini?**
+No, ed è voluto. Foto e PDF sono già compressi, quindi vengono salvati invariati. Risparmi spazio su testo, contenuti ripetuti e storico, non sui media.
+
+**L'archivio è cifrato?**
+Opzionalmente. `archivist init --encrypt` crea un archivio cifrato (XChaCha20-Poly1305, chiave dalla password con Argon2id); contenuti, nomi dei file e percorso del vault sono cifrati. Non sono nascosti numero e date degli snapshot e le dimensioni dei blocchi. **Se perdi la password i dati non sono recuperabili.** Puoi creare, sbloccare e cambiare la password anche dall'app (Impostazioni, Cifratura). Per cifrare un archivio in chiaro esistente usa Impostazioni → Cifratura → "Crea copia cifrata" oppure `archivist copy <nuova-cartella> --encrypt`: tutti gli snapshot vengono copiati in un nuovo archivio cifrato e l'originale resta intatto. Negli script usa `ARCHIVIST_PASSWORD` o `ARCHIVIST_PASSWORD_FILE`.
+
+**Cosa non viene conservato?**
+I link simbolici vengono ignorati; permessi Unix e attributi estesi non sono salvati (le date di modifica sì).
+
+**Due computer possono scrivere sullo stesso archivio?**
+Non contemporaneamente. Il lock è locale, non di rete.
+
+**Vault con `.git`?**
+Viene incluso come ogni altra cartella. Aggiungi `.git` alle esclusioni se non lo vuoi.
+
+## Contribuire
+
+Issue e pull request sono benvenute, soprattutto traduzioni e test sulle piattaforme.
+
+## Licenza
+
+[MIT](LICENSE)
