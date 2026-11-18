@@ -12,7 +12,8 @@
 [![Version](https://img.shields.io/badge/version-0.1.0-0A66E8)](Cargo.toml)
 [![Languages](https://img.shields.io/badge/languages-2-0A66E8)](#adding-a-language)
 [![Platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-0A66E8)](#platforms)
-[![Build](https://github.com/Gusions/archivist/actions/workflows/release.yml/badge.svg)](https://github.com/Gusions/archivist/actions/workflows/release.yml)
+[![CI](https://github.com/Gusions/archivist/actions/workflows/ci.yml/badge.svg)](https://github.com/Gusions/archivist/actions/workflows/ci.yml)
+[![Release](https://github.com/Gusions/archivist/actions/workflows/release.yml/badge.svg)](https://github.com/Gusions/archivist/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-0A66E8)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Gusions/archivist?style=flat&color=0A66E8)](https://github.com/Gusions/archivist/stargazers)
 
@@ -40,7 +41,7 @@ cargo build --release --features window   # needs Rust: https://rustup.rs
 
 In the window: pick your vault (Obsidian vaults are detected automatically), pick a backup folder (ideally on another disk), press **Back up now**. That is the whole setup.
 
-Prefer a ready-made build? Download one from [Releases](../../releases). On macOS, `./make-dmg.sh` produces `dist/Archivist.app` and `dist/Archivist.dmg`.
+Prefer a ready-made build? Download one from [Releases](../../releases): `Archivist-macOS-arm64.dmg` for Apple Silicon, plus zips for macOS, Windows and Linux. To build the `.dmg` yourself on macOS, run `./make-dmg.sh` (it produces `dist/Archivist.app` and `dist/Archivist.dmg`).
 
 > If Gatekeeper blocks the app on first launch: `xattr -d com.apple.quarantine <path>`
 
@@ -48,8 +49,8 @@ Prefer a ready-made build? Download one from [Releases](../../releases). On macO
 
 | Platform | Window | Status |
 |---|---|---|
-| macOS (arm64, x64) | WebKit (system) | Built by CI; menu bar and `.dmg` script less tested than Linux |
-| Windows x64 | WebView2 (preinstalled on Win 10/11) | Built by CI |
+| macOS (arm64, x64) | WebKit (system) | Built and tested by CI; `.dmg` for arm64 in every release; app not notarized (see Gatekeeper note) |
+| Windows x64 | WebView2 (preinstalled on Win 10/11) | Built and tested by CI |
 | Linux x64 | WebKitGTK | Built and run in CI and in development |
 
 No bundled browser: the binary is a few MB.
@@ -95,6 +96,10 @@ append to pack file (~64 MB)  -->  snapshot written last = visible only when com
 | `archivist diff [old] [new]` | Show added, modified and removed files between two snapshots |
 | `archivist export <id\|latest> <file>` | Export as `.tar.zst` |
 | `archivist prune` | Apply the retention policy |
+| `archivist forget <id>` | Delete one snapshot and reclaim unreferenced space |
+| `archivist schedule install\|status\|remove` | Background backups (macOS launchd agent) |
+| `archivist keychain save\|forget` | Remember or forget the archive password in the Keychain (macOS) |
+| `archivist window` | Open the native window (build with `--features window`) |
 | `archivist ui` | Local web UI in the browser instead of the window |
 
 ```bash
@@ -109,6 +114,8 @@ Settings (vault, archive folder, exclusions, retention, theme, language) are sav
 - A snapshot becomes visible only after it is fully written. An interrupted backup leaves at most orphaned data, cleaned by the next `prune`. Earlier backups are never modified.
 - The local UI listens on `127.0.0.1` only, requires a random token on every call and rejects non-local `Host` headers (DNS-rebinding defense).
 - Restore rejects paths containing `..` and non-empty destinations.
+- Restore and export re-hash every block they read: a damaged archive fails loudly instead of producing silently wrong files.
+- Archive writes are durable and atomic, with a heartbeat lock; crash and round-trip tests run in CI on Linux, macOS and Windows.
 
 ## Background backups
 
@@ -129,7 +136,7 @@ cargo test                                  # engine tests
 cargo build --release --features window     # native window build
 ```
 
-Layout: `src/repo.rs` (archive format), `src/backup.rs` (chunking and snapshots), `src/ops.rs` (restore, export, verify, retention), `src/server.rs` (local API), `src/window.rs` (native window and menu), `ui/index.html` (interface), `i18n/` (strings).
+Layout: `src/repo.rs` (archive format), `src/backend.rs` (storage backends), `src/crypto.rs` (encryption), `src/backup.rs` (chunking and snapshots), `src/copy.rs` (copy and encrypt an archive), `src/ops.rs` (restore, export, verify, retention), `src/schedule.rs` and `src/keychain.rs` (background backups, Keychain), `src/server.rs` (local API), `src/window.rs` (native window and menu), `ui/index.html` (interface), `i18n/` (strings).
 
 ## FAQ
 
