@@ -86,7 +86,7 @@ la CLI le usa come default.
 
 ## Limiti noti (v0.1)
 
-- **Cifratura opzionale**: `archivist init --encrypt` crea un archivio cifrato (XChaCha20-Poly1305, chiave dalla password con Argon2id); contenuti, nomi dei file e percorso del vault sono cifrati. Non sono nascosti numero e date degli snapshot e le dimensioni dei blocchi. **Se perdi la password i dati non sono recuperabili.** Puoi creare, sbloccare e cambiare la password anche dall'app (Impostazioni, Cifratura). Gli archivi in chiaro esistenti non vengono ancora convertiti: crea quello cifrato in una cartella nuova. Negli script usa `ARCHIVIST_PASSWORD` o `ARCHIVIST_PASSWORD_FILE`.
+- **Cifratura opzionale**: `archivist init --encrypt` crea un archivio cifrato (XChaCha20-Poly1305, chiave dalla password con Argon2id); contenuti, nomi dei file e percorso del vault sono cifrati. Non sono nascosti numero e date degli snapshot e le dimensioni dei blocchi. **Se perdi la password i dati non sono recuperabili.** Puoi creare, sbloccare e cambiare la password anche dall'app (Impostazioni, Cifratura). Per cifrare un archivio in chiaro esistente usa Impostazioni → Cifratura → "Crea copia cifrata" oppure `archivist copy <nuova-cartella> --encrypt`: tutti gli snapshot vengono copiati in un nuovo archivio cifrato e l'originale resta intatto. Negli script usa `ARCHIVIST_PASSWORD` o `ARCHIVIST_PASSWORD_FILE`.
 - Link simbolici ignorati; permessi Unix e attributi estesi non conservati (le date di modifica sì).
 - Non usare due operazioni di scrittura sullo stesso archivio da macchine diverse contemporaneamente (c'è un lock locale ma non su rete).
 - Vault con `.git` (plugin Obsidian Git): viene incluso come ogni altra cartella; aggiungi `.git` alle esclusioni se non lo vuoi.

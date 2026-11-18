@@ -2,6 +2,7 @@
 mod i18n;
 mod backend;
 mod backup;
+mod copy;
 mod crypto;
 mod keychain;
 mod schedule;
@@ -39,6 +40,14 @@ enum Cmd {
     },
     /// Change the password of an encrypted archive (data is not rewritten)
     Passwd,
+    /// Copy all snapshots into another archive. Use --encrypt to create an encrypted archive from a
+    /// plain one (the original is left untouched). Copying again only adds new snapshots.
+    Copy {
+        dest: PathBuf,
+        /// Create DEST as an encrypted archive (asks for a new password)
+        #[arg(long)]
+        encrypt: bool,
+    },
     /// Back up automatically in the background (macOS: a launchd agent)
     Schedule {
         #[command(subcommand)]
@@ -188,6 +197,37 @@ fn run() -> Result<()> {
             let pass = new_password(Some("ARCHIVIST_PASSWORD"))?;
             Repo::init_encrypted(&p, &pass)?;
             println!("{}", tr!("cli.initialized", p = p.display()));
+        }
+        Cmd::Copy { dest, encrypt } => {
+            let src_path = repo_path(&cli)?;
+            if std::fs::canonicalize(&src_path).ok() == std::fs::canonicalize(dest).ok() && dest.exists() {
+                bail!(tr!("rs.copy_same"));
+            }
+            let src = Repo::open(&src_path)?;
+            let dst = if Repo::is_repo(dest) {
+                if *encrypt {
+                    bail!(tr!("rs.copy_dest_exists"));
+                }
+                let pass = if Repo::is_encrypted_at(dest) {
+                    Some(match std::env::var("ARCHIVIST_NEW_PASSWORD").ok().filter(|p| !p.is_empty()) {
+                        Some(p) => p,
+                        None => rpassword::prompt_password(tr!("cli.password_prompt"))?,
+                    })
+                } else {
+                    None
+                };
+                Repo::open_with(std::sync::Arc::new(backend::LocalBackend::new(dest)), &dest.display().to_string(), pass.as_deref())?
+            } else if *encrypt {
+                Repo::init_encrypted(dest, &new_password(Some("ARCHIVIST_NEW_PASSWORD"))?)?
+            } else {
+                Repo::init(dest)?
+            };
+            let r = copy::copy_repo(&src, &dst, st.level, &prog)?;
+            let v = ops::verify(&dst, false, &prog)?;
+            println!("{}", tr!("cli.copy_done", n = r.copied, skipped = r.skipped, size = human(r.written), dest = dest.display()));
+            if !v.ok {
+                bail!(tr!("res.verify_bad"));
+            }
         }
         Cmd::Schedule { action } => match action {
             ScheduleCmd::Install { every } => {

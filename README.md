@@ -85,6 +85,7 @@ append to pack file (~64 MB)  -->  snapshot written last = visible only when com
 | Command | What it does |
 |---|---|
 | `archivist init --encrypt` | Create an encrypted archive (asks for a password) |
+| `archivist copy <dest> [--encrypt]` | Copy all snapshots into another archive (re-encoding every block). With `--encrypt` it creates an encrypted archive from a plain one; copying again only adds new snapshots |
 | `archivist passwd` | Change the password (data is not rewritten) |
 | `archivist backup` | Create a snapshot |
 | `archivist list` / `stats` | List snapshots / show sizes and ratio |
@@ -139,7 +140,7 @@ No. It protects one thing, an Obsidian vault, with history and integrity checks.
 No, and by design. Photos and PDFs are already compressed, so they are stored unchanged. You save space on text, on repeated content and on history, not on media.
 
 **Is the archive encrypted?**
-Optionally. Create an encrypted archive with `archivist init --encrypt`; contents, file names, the directory tree and the vault path are encrypted and authenticated (XChaCha20-Poly1305, key from your password via Argon2id). Not hidden: the number of snapshots, their timestamps and blob sizes. **If you lose the password the data cannot be recovered.** You can also create, unlock and change the password of an encrypted archive from the app (Settings, Encryption). Existing plain archives are not converted yet: create the encrypted archive in a new folder. For scripts set `ARCHIVIST_PASSWORD` or `ARCHIVIST_PASSWORD_FILE`; otherwise the CLI asks. Older Archivist versions refuse to open encrypted archives.
+Optionally. Create an encrypted archive with `archivist init --encrypt`; contents, file names, the directory tree and the vault path are encrypted and authenticated (XChaCha20-Poly1305, key from your password via Argon2id). Not hidden: the number of snapshots, their timestamps and blob sizes. **If you lose the password the data cannot be recovered.** You can also create, unlock and change the password of an encrypted archive from the app (Settings, Encryption). To encrypt an existing plain archive, use Settings > Encryption > "Create encrypted copy" or `archivist copy <new-folder> --encrypt`: every snapshot is copied into a new encrypted archive and the original is left untouched. For scripts set `ARCHIVIST_PASSWORD` or `ARCHIVIST_PASSWORD_FILE`; otherwise the CLI asks. Older Archivist versions refuse to open encrypted archives.
 
 **What is not preserved?**
 Symlinks are skipped; Unix permissions and extended attributes are not stored (modification times are).
