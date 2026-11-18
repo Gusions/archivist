@@ -3,6 +3,8 @@ mod i18n;
 mod backend;
 mod backup;
 mod crypto;
+mod keychain;
+mod schedule;
 mod ops;
 mod repo;
 mod server;
@@ -37,6 +39,16 @@ enum Cmd {
     },
     /// Change the password of an encrypted archive (data is not rewritten)
     Passwd,
+    /// Back up automatically in the background (macOS: a launchd agent)
+    Schedule {
+        #[command(subcommand)]
+        action: ScheduleCmd,
+    },
+    /// Remember or forget the archive password in the system keychain (macOS)
+    Keychain {
+        #[command(subcommand)]
+        action: KeychainCmd,
+    },
     /// Back up the vault
     Backup {
         #[arg(long)]
@@ -87,6 +99,28 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum ScheduleCmd {
+    /// Turn on background backups
+    Install {
+        /// Minutes between backups
+        #[arg(long, default_value_t = 60)]
+        every: u32,
+    },
+    /// Turn off background backups
+    Remove,
+    /// Show whether background backups are on
+    Status,
+}
+
+#[derive(Subcommand)]
+enum KeychainCmd {
+    /// Save the password (asks for it unless ARCHIVIST_PASSWORD is set)
+    Save,
+    /// Remove the saved password
+    Forget,
+}
+
 fn human(b: u64) -> String {
     let u = ["B", "KB", "MB", "GB", "TB"];
     let mut v = b as f64;
@@ -134,7 +168,7 @@ fn run() -> Result<()> {
     // for encrypted archives, get the password (env, file or prompt) before opening
     let repo_path = |cli: &Cli| -> Result<PathBuf> {
         let p = raw_path(cli)?;
-        if Repo::is_encrypted_at(&p) && crypto::password().is_none() {
+        if Repo::is_encrypted_at(&p) && crypto::password_for(&p).is_none() {
             crypto::set_password(Some(rpassword::prompt_password(tr!("cli.password_prompt"))?));
         }
         Ok(p)
@@ -154,6 +188,60 @@ fn run() -> Result<()> {
             let pass = new_password(Some("ARCHIVIST_PASSWORD"))?;
             Repo::init_encrypted(&p, &pass)?;
             println!("{}", tr!("cli.initialized", p = p.display()));
+        }
+        Cmd::Schedule { action } => match action {
+            ScheduleCmd::Install { every } => {
+                if st.vault.is_empty() || st.repo.is_empty() {
+                    bail!(tr!("rs.schedule_needs_settings"));
+                }
+                let p = raw_path(&cli)?;
+                if Repo::is_encrypted_at(&p) && keychain::load(&keychain::account(&p)).is_none() {
+                    bail!(tr!("rs.schedule_needs_keychain"));
+                }
+                let every = (*every).clamp(5, 10_080);
+                schedule::install(&std::env::current_exe()?, every)?;
+                println!("{}", tr!("cli.schedule_installed", n = every, log = schedule::status().log));
+            }
+            ScheduleCmd::Remove => {
+                schedule::remove()?;
+                println!("{}", tr!("cli.schedule_removed"));
+            }
+            ScheduleCmd::Status => {
+                let s = schedule::status();
+                if s.installed {
+                    println!("{}", tr!("cli.schedule_status_on", n = s.minutes));
+                    if s.stale {
+                        eprintln!("{}", tr!("cli.schedule_stale"));
+                    }
+                } else {
+                    println!("{}", tr!("cli.schedule_status_off"));
+                }
+                if !s.last_log.is_empty() {
+                    println!("{}", tr!("cli.schedule_last", line = s.last_log));
+                }
+            }
+        },
+        Cmd::Keychain { action } => {
+            let p = raw_path(&cli)?;
+            if !Repo::is_encrypted_at(&p) {
+                bail!(tr!("rs.not_encrypted"));
+            }
+            match action {
+                KeychainCmd::Save => {
+                    let pass = match crypto::password() {
+                        Some(p) => p,
+                        None => rpassword::prompt_password(tr!("cli.password_prompt"))?,
+                    };
+                    crypto::set_password(Some(pass.clone()));
+                    Repo::open(&p)?; // verify before saving
+                    keychain::save(&keychain::account(&p), &pass)?;
+                    println!("{}", tr!("cli.keychain_saved"));
+                }
+                KeychainCmd::Forget => {
+                    keychain::forget(&keychain::account(&p));
+                    println!("{}", tr!("cli.keychain_forgotten"));
+                }
+            }
         }
         Cmd::Passwd => {
             let repo = Repo::open(&repo_path(&cli)?)?;

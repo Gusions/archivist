@@ -111,7 +111,11 @@ Settings (vault, archive folder, exclusions, retention, theme, language) are sav
 
 ## Background backups
 
-The in-app schedule runs only while Archivist is open. For true background runs use the OS scheduler: a LaunchAgent on macOS (ready-made plist in [README.it.md](README.it.md#backup-in-background)) or `schtasks /Create /SC HOURLY /TN "Archivist" /TR "C:\path\archivist.exe backup"` on Windows.
+- **macOS**: `archivist schedule install --every 60` (or Settings, Backup, "Back up in the background") installs a per-user launchd agent that runs `archivist backup` every N minutes, even when the app is closed. Log: `~/Library/Logs/Archivist/backup.log`. `archivist schedule status` shows whether it is on and the last log line; `archivist schedule remove` turns it off. The agent points to the binary that installed it: if you move or delete the app, install again. The first time, macOS may ask to let Archivist access the folder that holds your vault (Documents, iCloud Drive...); if it does not, the log will show a permission error.
+- **Encrypted archives** need their password in the Keychain for this: `archivist keychain save` or tick "Remember in the Keychain" when you create or unlock the archive. `archivist keychain forget` removes it.
+- **Windows**: `schtasks /Create /SC HOURLY /TN "Archivist" /TR "C:\path\archivist.exe backup"`. **Linux**: a systemd user timer or cron running `archivist backup`. Not automated yet, and encrypted archives need `ARCHIVIST_PASSWORD_FILE` there.
+- The in-app schedule (Settings, Backup, Automatic backup) runs only while Archivist is open.
+- `ARCHIVIST_CONFIG_DIR` points Archivist to another settings folder (separate profiles); an agent installed with it set keeps using it.
 
 ## Adding a language
 

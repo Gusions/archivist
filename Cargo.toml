@@ -33,6 +33,7 @@ wry = { version = "0.57.2", optional = true }
 zstd = { version = "0.13", features = ["zstdmt"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 muda = { version = "0.17", optional = true }
 
 [dev-dependencies]

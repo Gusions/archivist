@@ -2,6 +2,8 @@ use crate::backup::{self, Progress};
 use crate::ops;
 use crate::backend::LocalBackend;
 use crate::crypto;
+use crate::keychain;
+use crate::schedule;
 use crate::repo::Repo;
 use crate::settings::{detect_vaults, expand, Settings};
 use anyhow::Result;
@@ -166,7 +168,7 @@ async fn state(State(app): State<S>) -> Json<Value> {
     let kind = repo_kind(&s.repo);
     let mut locked = false;
     if kind != "none" {
-        if kind == "encrypted" && crypto::password().is_none() {
+        if kind == "encrypted" && crypto::password_for(&PathBuf::from(&s.repo)).is_none() {
             locked = true;
         } else {
             let opened = tokio::task::block_in_place(|| Repo::open(&PathBuf::from(&s.repo)));
@@ -191,7 +193,7 @@ async fn state(State(app): State<S>) -> Json<Value> {
         "bytes": app.prog.bytes.load(Relaxed),
         "stored": app.prog.stored.load(Relaxed),
     });
-    Json(json!({"version": env!("CARGO_PKG_VERSION"), "settings": s, "snapshots": snaps, "stats": stats, "error": err, "repo_kind": kind, "locked": locked, "job": job, "detected_vaults": detect_vaults(), "lang": crate::i18n::current(), "langs": crate::i18n::available().iter().map(|(c, n)| json!({"code": c, "name": n})).collect::<Vec<_>>()}))
+    Json(json!({"version": env!("CARGO_PKG_VERSION"), "settings": s, "snapshots": snaps, "stats": stats, "error": err, "repo_kind": kind, "locked": locked, "schedule": schedule::status(), "keychain": {"supported": keychain::supported(), "remembered": kind == "encrypted" && !locked && keychain::load(&keychain::account(&PathBuf::from(&s.repo))).is_some()}, "job": job, "detected_vaults": detect_vaults(), "lang": crate::i18n::current(), "langs": crate::i18n::available().iter().map(|(c, n)| json!({"code": c, "name": n})).collect::<Vec<_>>()}))
 }
 
 async fn put_settings(State(app): State<S>, Json(mut s): Json<Settings>) -> Res {
@@ -212,22 +214,35 @@ async fn i18n_catalog(axum::extract::Query(q): axum::extract::Query<std::collect
 #[derive(Deserialize)]
 struct PassReq {
     password: String,
+    /// also keep the password in the system keychain
+    #[serde(default)]
+    remember: bool,
+}
+
+fn remember_if_asked(app: &S, r: &PassReq) -> bool {
+    if !r.remember {
+        return false;
+    }
+    let path = app.settings.lock().unwrap().repo.clone();
+    keychain::save(&keychain::account(&PathBuf::from(path)), &r.password).is_ok()
 }
 
 async fn unlock(State(app): State<S>, Json(r): Json<PassReq>) -> Res {
     let path = app.settings.lock().unwrap().repo.clone();
     let pw = r.password.clone();
     tokio::task::spawn_blocking(move || try_unlock(&path, &pw)).await.map_err(bad)?.map_err(bad)?;
+    let remembered = remember_if_asked(&app, &r);
     crypto::set_password(Some(r.password));
-    Ok(Json(json!({"ok": true})))
+    Ok(Json(json!({"ok": true, "remembered": remembered})))
 }
 
 async fn encrypt_create(State(app): State<S>, Json(r): Json<PassReq>) -> Res {
     let path = app.settings.lock().unwrap().repo.clone();
     let pw = r.password.clone();
     tokio::task::spawn_blocking(move || create_encrypted(&path, &pw)).await.map_err(bad)?.map_err(bad)?;
+    let remembered = remember_if_asked(&app, &r);
     crypto::set_password(Some(r.password));
-    Ok(Json(json!({"ok": true})))
+    Ok(Json(json!({"ok": true, "remembered": remembered})))
 }
 
 async fn encrypt_password(State(app): State<S>, Json(r): Json<PassReq>) -> Res {
@@ -235,7 +250,56 @@ async fn encrypt_password(State(app): State<S>, Json(r): Json<PassReq>) -> Res {
     let repo = open_repo(&app)?;
     let pw = r.password.clone();
     tokio::task::spawn_blocking(move || repo.change_password(&pw)).await.map_err(bad)?.map_err(bad)?;
+    let remembered = remember_if_asked(&app, &r);
     crypto::set_password(Some(r.password));
+    Ok(Json(json!({"ok": true, "remembered": remembered})))
+}
+
+#[derive(Deserialize)]
+struct KeychainReq {
+    remember: bool,
+}
+
+/// Save the password currently in use to the keychain, or remove it.
+async fn set_keychain(State(app): State<S>, Json(r): Json<KeychainReq>) -> Res {
+    let path = PathBuf::from(app.settings.lock().unwrap().repo.clone());
+    if !Repo::is_encrypted_at(&path) {
+        return Err(bad(tr!("rs.not_encrypted")));
+    }
+    if r.remember {
+        let Some(pw) = crypto::password() else { return Err(bad(tr!("rs.password_required"))) };
+        keychain::save(&keychain::account(&path), &pw).map_err(bad)?;
+    } else {
+        keychain::forget(&keychain::account(&path));
+    }
+    Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+struct ScheduleReq {
+    enabled: bool,
+    minutes: Option<u32>,
+}
+
+async fn set_schedule(State(app): State<S>, Json(r): Json<ScheduleReq>) -> Res {
+    let s = app.settings.lock().unwrap().clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        if !r.enabled {
+            return schedule::remove();
+        }
+        if s.vault.is_empty() || s.repo.is_empty() {
+            anyhow::bail!(tr!("rs.schedule_needs_settings"));
+        }
+        let p = PathBuf::from(&s.repo);
+        if Repo::is_encrypted_at(&p) && keychain::load(&keychain::account(&p)).is_none() {
+            anyhow::bail!(tr!("rs.schedule_needs_keychain"));
+        }
+        let minutes = r.minutes.filter(|m| *m > 0).unwrap_or(60).clamp(5, 10_080);
+        schedule::install(&std::env::current_exe()?, minutes)
+    })
+    .await
+    .map_err(bad)?
+    .map_err(bad)?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -397,6 +461,8 @@ pub fn run(
             .route("/api/settings", post(put_settings))
             .route("/api/i18n", get(i18n_catalog))
             .route("/api/unlock", post(unlock))
+            .route("/api/keychain", post(set_keychain))
+            .route("/api/schedule", post(set_schedule))
             .route("/api/encrypt/create", post(encrypt_create))
             .route("/api/encrypt/password", post(encrypt_password))
             .route("/api/backup", post(run_backup))
