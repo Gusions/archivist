@@ -16,7 +16,7 @@ Restore it byte for byte. No cloud, no account.
 
 <br>
 
-<img src="docs/screenshots/overview-light.png" width="780" alt="Archivist overview">
+<img src="docs/screenshots/snapshots-light.png" width="780" alt="Archivist, snapshots view">
 
 </div>
 

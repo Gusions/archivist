@@ -16,7 +16,7 @@ Ripristinalo byte per byte. Niente cloud, niente account.
 
 <br>
 
-<img src="docs/screenshots/overview-light.png" width="780" alt="Archivist, panoramica">
+<img src="docs/screenshots/snapshots-light.png" width="780" alt="Archivist, elenco degli snapshot">
 
 </div>
 
