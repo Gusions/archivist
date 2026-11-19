@@ -23,12 +23,16 @@ pub fn supported() -> bool {
 struct Memo(Mutex<HashMap<String, Option<String>>>);
 
 impl Memo {
+    /// The lock is held while the system is asked, so several threads that need the same answer at
+    /// the same time (the UI fires a few requests at once) wait for the one prompt instead of each
+    /// causing their own.
     fn get_or_load(&self, account: &str, load: impl FnOnce() -> Option<String>) -> Option<String> {
-        if let Some(v) = self.0.lock().unwrap().get(account) {
+        let mut map = self.0.lock().unwrap();
+        if let Some(v) = map.get(account) {
             return v.clone();
         }
         let v = load();
-        self.0.lock().unwrap().insert(account.to_string(), v.clone());
+        map.insert(account.to_string(), v.clone());
         v
     }
     fn set(&self, account: &str, v: Option<String>) {
@@ -111,5 +115,29 @@ mod tests {
         assert_eq!(m.get_or_load("b", || unreachable!()).as_deref(), Some("x"));
         m.set("a", Some("new".into()));
         assert_eq!(m.get_or_load("a", || unreachable!()).as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn simultaneous_lookups_cause_a_single_system_request() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let m = Arc::new(Memo::default());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let (m, calls) = (m.clone(), calls.clone());
+                std::thread::spawn(move || {
+                    m.get_or_load("same", || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_millis(150)); // the user is looking at the prompt
+                        Some("pw".into())
+                    })
+                })
+            })
+            .collect();
+        for h in handles {
+            assert_eq!(h.join().unwrap().as_deref(), Some("pw"));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "each thread asked the system on its own, which means several prompts");
     }
 }
